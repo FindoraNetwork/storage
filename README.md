@@ -9,3 +9,4 @@ The crate was designed to be the blockchain state database. It provides persiste
 - Key-value updates(in a block) applied to storage can be reverted if block failes to commit.
 - Prefix-based key-value iteration on commited state.
 - Prefix-based key-value iteration on latest state.
+- Root hash calculation.
