@@ -80,12 +80,7 @@ where
     }
 
     /// iterate db only
-    fn iter_db(
-        &self,
-        prefix: Prefix,
-        asc: bool,
-        func: &mut dyn FnMut(KValue) -> bool,
-    ) -> bool {
+    fn iter_db(&self, prefix: Prefix, asc: bool, func: &mut dyn FnMut(KValue) -> bool) -> bool {
         let mut iter_order = IterOrder::Desc;
         if asc {
             iter_order = IterOrder::Asc
@@ -157,6 +152,40 @@ where
     /// delete KV. Nothing happens if key not found
     fn delete(&mut self, key: &[u8]) -> Result<()> {
         self.state_mut().delete(key)
+    }
+}
+
+pub struct PrefixedStore<'a, D: MerkleDB> {
+    pfx: Prefix,
+    state: &'a mut State<D>,
+}
+
+impl<'a, D: MerkleDB> Stated<'a, D> for PrefixedStore<'a, D> {
+    fn set_state(&mut self, state: &'a mut State<D>) {
+        self.state = state;
+    }
+
+    fn state(&self) -> &State<D> {
+        &self.state
+    }
+
+    fn state_mut(&mut self) -> &mut State<D> {
+        self.state
+    }
+
+    fn prefix(&self) -> Prefix {
+        self.pfx.clone()
+    }
+}
+
+impl<'a, D: MerkleDB> Store<'a, D> for PrefixedStore<'a, D> {}
+
+impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
+    pub fn new(prefix: &str, state: &'a mut State<D>) -> Self {
+        PrefixedStore {
+            pfx: Prefix::new(prefix.as_bytes()),
+            state,
+        }
     }
 }
 
@@ -661,5 +690,55 @@ mod tests {
         });
         let amount_pool = store.get_pool().unwrap();
         assert_eq!(total, amount_pool);
+    }
+
+    #[test]
+    fn test_prefixed_store() {
+        // create State
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let mut state = State::new(cs.clone());
+        let mut store = PrefixedStore::new("testStore", &mut state);
+
+        store.set(b"validator_fra2221", b"200".to_vec());
+        store.set(b"validator_fra2222", b"300".to_vec());
+        store.set(b"validator_fra2223", b"500".to_vec());
+
+        assert_eq!(
+            store.get(b"validator_fra2221").unwrap(),
+            Some(b"200".to_vec())
+        );
+
+        let (_, _) = store.state.commit(12).unwrap();
+
+        assert_eq!(
+            store.get(b"validator_fra2222").unwrap(),
+            Some(b"300".to_vec())
+        );
+
+        store.set(b"validator_fra2224", b"700".to_vec());
+        let prefix = Prefix::new(b"validator");
+
+        let res_iter = store.iter_cur(prefix);
+        let list: Vec<_> = res_iter.collect();
+
+        assert_eq!(list.len(), 4);
+        assert_eq!(
+            store.get(b"validator_fra2224").unwrap(),
+            Some(b"700".to_vec())
+        );
+        assert_eq!(store.exists(b"validator_fra2224").unwrap(), true);
+
+        let _ = store.delete(b"validator_fra2224");
+        assert_eq!(store.get(b"validator_fra2224").unwrap(), None);
+        assert_eq!(store.exists(b"validator_fra2224").unwrap(), false);
+
+        let (_, _) = store.state.commit(13).unwrap();
+        assert_eq!(
+            store.get(b"validator_fra2221").unwrap(),
+            Some(b"200".to_vec())
+        );
+        assert_eq!(store.exists(b"validator_fra2221").unwrap(), true);
     }
 }
