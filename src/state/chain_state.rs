@@ -158,10 +158,11 @@ where
 
     /// Calculate and returns current root hash of the Merkle tree
     pub fn root_hash(&self) -> Vec<u8> {
-        if self.db.root_hash() == NULL_HASH {
+        let hash = self.db.root_hash();
+        if hash == NULL_HASH {
             return vec![];
         }
-        self.db.root_hash()
+        hash
     }
 
     /// Returns current height of the ChainState
