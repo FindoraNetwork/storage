@@ -50,12 +50,7 @@ impl MerkleDB for TempFinDB {
         self.deref_mut().put_batch(kvs)
     }
 
-    fn iter(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: super::IterOrder,
-    ) -> super::merk_db::DBIter {
+    fn iter(&self, lower: &[u8], upper: &[u8], order: super::IterOrder) -> super::merk_db::DBIter {
         self.deref().iter(lower, upper, order)
     }
 

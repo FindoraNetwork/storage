@@ -106,12 +106,8 @@ impl MerkleDB for FinDB {
         readopts.set_iterate_lower_bound(lower.to_vec());
         readopts.set_iterate_upper_bound(upper.to_vec());
         match order {
-            IterOrder::Asc => {
-                self.db.iter_opt_aux(rocksdb::IteratorMode::Start, readopts)
-            }
-            IterOrder::Desc => {
-                self.db.iter_opt_aux(rocksdb::IteratorMode::End, readopts)
-            }
+            IterOrder::Asc => self.db.iter_opt_aux(rocksdb::IteratorMode::Start, readopts),
+            IterOrder::Desc => self.db.iter_opt_aux(rocksdb::IteratorMode::End, readopts),
         }
     }
 

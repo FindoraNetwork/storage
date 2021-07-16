@@ -4,7 +4,7 @@
 /// and RocksDB backend.
 ///
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
-use merk::tree::Tree;
+use merk::tree::{Tree, NULL_HASH};
 use ruc::*;
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
@@ -158,7 +158,11 @@ where
 
     /// Calculate and returns current root hash of the Merkle tree
     pub fn root_hash(&self) -> Vec<u8> {
-        self.db.root_hash()
+        let hash = self.db.root_hash();
+        if hash == NULL_HASH {
+            return vec![];
+        }
+        hash
     }
 
     /// Returns current height of the ChainState
