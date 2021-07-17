@@ -153,7 +153,7 @@ where
             )
             .c(d!())?;
 
-        Ok((self.db.root_hash(), height))
+        Ok((self.root_hash(), height))
     }
 
     /// Calculate and returns current root hash of the Merkle tree
