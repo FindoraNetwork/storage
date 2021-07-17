@@ -6,11 +6,12 @@ use std::collections::btree_map::IntoIter;
 
 mod util;
 pub use util::Prefix;
+use std::borrow::BorrowMut;
 
 /// statable
-pub trait Stated<'a, D: MerkleDB> {
+pub trait Stated<D: MerkleDB> {
     /// set state
-    fn set_state(&mut self, state: &'a mut State<D>);
+    fn set_state(&mut self, state: State<D>);
 
     /// get state
     fn state(&self) -> &State<D>;
@@ -23,12 +24,12 @@ pub trait Stated<'a, D: MerkleDB> {
 }
 
 /// store for mempool/consensus/query connection
-pub trait Store<'a, D>: Stated<'a, D>
+pub trait Store<D>: Stated<D>
 where
     D: MerkleDB,
 {
     //===========================read=============================
-    fn with_state(&mut self, state: &'a mut State<D>) -> &Self {
+    fn with_state(&mut self, state: State<D>) -> &Self {
         self.set_state(state);
         self
     }
@@ -129,7 +130,7 @@ where
     }
 
     //===========================write=============================
-    fn with_state_mut(&mut self, state: &'a mut State<D>) -> &mut Self {
+    fn with_state_mut(&mut self, state: State<D>) -> &mut Self {
         self.set_state(state);
         self
     }
@@ -155,13 +156,13 @@ where
     }
 }
 
-pub struct PrefixedStore<'a, D: MerkleDB> {
+pub struct PrefixedStore<D: MerkleDB> {
     pfx: Prefix,
-    state: &'a mut State<D>,
+    state: State<D>,
 }
 
-impl<'a, D: MerkleDB> Stated<'a, D> for PrefixedStore<'a, D> {
-    fn set_state(&mut self, state: &'a mut State<D>) {
+impl<D: MerkleDB> Stated< D> for PrefixedStore< D> {
+    fn set_state(&mut self, state: State<D>) {
         self.state = state;
     }
 
@@ -170,7 +171,7 @@ impl<'a, D: MerkleDB> Stated<'a, D> for PrefixedStore<'a, D> {
     }
 
     fn state_mut(&mut self) -> &mut State<D> {
-        self.state
+        self.state.borrow_mut()
     }
 
     fn prefix(&self) -> Prefix {
@@ -178,10 +179,10 @@ impl<'a, D: MerkleDB> Stated<'a, D> for PrefixedStore<'a, D> {
     }
 }
 
-impl<'a, D: MerkleDB> Store<'a, D> for PrefixedStore<'a, D> {}
+impl< D: MerkleDB> Store< D> for PrefixedStore<D> {}
 
-impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
-    pub fn new(prefix: &str, state: &'a mut State<D>) -> Self {
+impl<D: MerkleDB> PrefixedStore<D> {
+    pub fn new(prefix: &str, state: State<D>) -> Self {
         PrefixedStore {
             pfx: Prefix::new(prefix.as_bytes()),
             state,
@@ -189,10 +190,11 @@ impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::TempFinDB;
+    use crate::db::{TempFinDB, FinDB};
     use crate::state::ChainState;
     use parking_lot::RwLock;
     use rand::Rng;
@@ -699,7 +701,7 @@ mod tests {
         let fdb = TempFinDB::open(path).expect("failed to open db");
         let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
         let mut state = State::new(cs.clone());
-        let mut store = PrefixedStore::new("testStore", &mut state);
+        let mut store = PrefixedStore::new("testStore", state);
 
         store.set(b"validator_fra2221", b"200".to_vec());
         store.set(b"validator_fra2222", b"300".to_vec());
