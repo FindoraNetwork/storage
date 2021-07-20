@@ -38,6 +38,11 @@ where
         }
     }
 
+    /// Returns the chain state of the store.
+    pub fn chain_state(&self) -> Arc<RwLock<ChainState<D>>> {
+        self.chain_state.clone()
+    }
+
     /// Gets a value for the given key.
     ///
     /// First checks the cache for the latest value for that key.
