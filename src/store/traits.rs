@@ -155,7 +155,8 @@ where
     }
 }
 
-
+/// A trait that implements the same functionality above without the requirement of owning a state
+/// reference
 pub trait StatelessStore {
     //===========================read=============================
     /// get object by key
