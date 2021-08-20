@@ -47,7 +47,7 @@ impl FinDB {
     ///
     /// path, one will be created.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<FinDB> {
-        let db = Merk::open(path).map_err(|_| eg!("Failed to destory db"))?;
+        let db = Merk::open(path).map_err(|_| eg!("Failed to open db"))?;
         Ok(Self { db })
     }
 
