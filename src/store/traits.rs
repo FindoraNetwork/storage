@@ -1,10 +1,9 @@
-use crate::db::{MerkleDB, IterOrder, KValue};
-use crate::state::{State, KVecMap};
+use crate::db::{IterOrder, KValue, MerkleDB};
+use crate::state::{KVecMap, State};
 use crate::store::Prefix;
-use std::collections::btree_map::IntoIter;
 use ruc::*;
 use serde::{de, Serialize};
-
+use std::collections::btree_map::IntoIter;
 
 /// statable
 pub trait Stated<'a, D: MerkleDB> {
@@ -20,7 +19,6 @@ pub trait Stated<'a, D: MerkleDB> {
     /// get base prefix
     fn prefix(&self) -> Prefix;
 }
-
 
 /// store for mempool/consensus/query connection
 pub trait Store<'a, D>: Stated<'a, D>
@@ -212,10 +210,7 @@ pub trait StatelessStore {
     }
 
     /// iterate db AND cache combined
-    fn iter_cur<D: MerkleDB>(
-        state: &State<D>,
-        prefix: Prefix,
-    ) -> IntoIter<Vec<u8>, Vec<u8>> {
+    fn iter_cur<D: MerkleDB>(state: &State<D>, prefix: Prefix) -> IntoIter<Vec<u8>, Vec<u8>> {
         // Iterate chain state
         let mut kv_map = KVecMap::new();
         state.iterate(

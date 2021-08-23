@@ -1,10 +1,10 @@
-use crate::db:: MerkleDB;
+use crate::db::MerkleDB;
 use crate::state::State;
-pub use util::Prefix;
 use crate::store::traits::{Stated, Store};
+pub use util::Prefix;
 
-mod util;
 pub mod traits;
+mod util;
 
 pub struct PrefixedStore<'a, D: MerkleDB> {
     pfx: Prefix,
@@ -47,9 +47,9 @@ mod tests {
     use crate::state::ChainState;
     use parking_lot::RwLock;
     use rand::Rng;
+    use ruc::*;
     use std::sync::Arc;
     use std::{thread, time};
-    use ruc::*;
 
     // a example store
     struct StakeStore<'a, D: MerkleDB> {
@@ -163,6 +163,43 @@ mod tests {
         fn pool_key(&self) -> Prefix {
             self.pfx.push(b"pool")
         }
+    }
+
+    #[test]
+    fn prefixed_store() {
+        // create store
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let mut state = State::new(cs);
+        let mut store = PrefixedStore::new("my_store", &mut state);
+        let hash0 = store.state().root_hash();
+
+        // set kv pairs and commit
+        store.set(b"k10", b"v10".to_vec());
+        store.set(b"k20", b"v20".to_vec());
+        let (hash1, _height) = store.state_mut().commit(1).unwrap();
+
+        // verify
+        assert_eq!(store.get(b"k10").unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(store.get(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_ne!(hash0, hash1);
+
+        // add, del and update
+        store.set(b"k10", b"v15".to_vec());
+        store.delete(b"k20").unwrap();
+        store.set(b"k30", b"v30".to_vec());
+
+        // verify
+        assert_eq!(store.get(b"k10").unwrap(), Some(b"v15".to_vec()));
+        assert_eq!(store.get(b"k20").unwrap(), None);
+        assert_eq!(store.get(b"k30").unwrap(), Some(b"v30".to_vec()));
+
+        // revert and verify
+        store.state_mut().discard_session();
+        assert_eq!(store.get(b"k10").unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(store.get(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(store.get(b"k30").unwrap(), None);
     }
 
     #[test]
