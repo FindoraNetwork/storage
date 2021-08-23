@@ -23,10 +23,10 @@ use std::sync::Arc;
 fn prefixed_store() {
         // create store
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let fdb = FinDB::open(path).expect("failed to open db");
         let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
         let mut state = State::new(cs);
-        let mut store = PrefixedStore::new("mystore", &mut state);
+        let mut store = PrefixedStore::new("my_store", &mut state);
         let hash0 = store.state().root_hash();
 
         // set kv pairs and commit
