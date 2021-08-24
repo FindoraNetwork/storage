@@ -1,159 +1,10 @@
-use crate::db::{IterOrder, KValue, MerkleDB};
-use crate::state::{KVecMap, State};
-use ruc::*;
-use serde::{de, Serialize};
-use std::collections::btree_map::IntoIter;
-
-mod util;
+use crate::db::MerkleDB;
+use crate::state::State;
+use crate::store::traits::{Stated, Store};
 pub use util::Prefix;
 
-/// statable
-pub trait Stated<'a, D: MerkleDB> {
-    /// set state
-    fn set_state(&mut self, state: &'a mut State<D>);
-
-    /// get state
-    fn state(&self) -> &State<D>;
-
-    /// get mut state
-    fn state_mut(&mut self) -> &mut State<D>;
-
-    /// get base prefix
-    fn prefix(&self) -> Prefix;
-}
-
-/// store for mempool/consensus/query connection
-pub trait Store<'a, D>: Stated<'a, D>
-where
-    D: MerkleDB,
-{
-    //===========================read=============================
-    fn with_state(&mut self, state: &'a mut State<D>) -> &Self {
-        self.set_state(state);
-        self
-    }
-
-    /// get object by key
-    ///
-    /// returns deserialized object if key exists or None otherwise
-    fn get_obj<T>(&self, key: &[u8]) -> Result<Option<T>>
-    where
-        T: de::DeserializeOwned,
-    {
-        match self.get(key).c(d!())? {
-            Some(value) => {
-                let obj = self.from_vec(&value).c(d!())?;
-                Ok(Some(obj))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// deserialize object from Vec<u8>
-    fn from_vec<T>(&self, value: &[u8]) -> Result<T>
-    where
-        T: de::DeserializeOwned,
-    {
-        let obj = serde_json::from_slice::<T>(value).c(d!())?;
-        Ok(obj)
-    }
-
-    /// get object by key
-    ///
-    /// return deserialized object if key exists or default object otherwise
-    fn get_obj_or<T>(&self, key: &[u8], default: T) -> Result<T>
-    where
-        T: de::DeserializeOwned,
-    {
-        match self.get(key).c(d!())? {
-            Some(value) => {
-                let obj = serde_json::from_slice::<T>(value.as_ref()).c(d!())?;
-                Ok(obj)
-            }
-            None => Ok(default),
-        }
-    }
-
-    /// get value. Returns None if deleted
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.state().get(key)
-    }
-
-    /// iterate db only
-    fn iter_db(&self, prefix: Prefix, asc: bool, func: &mut dyn FnMut(KValue) -> bool) -> bool {
-        let mut iter_order = IterOrder::Desc;
-        if asc {
-            iter_order = IterOrder::Asc
-        }
-        self.state()
-            .iterate(&prefix.begin(), &prefix.end(), iter_order, func)
-    }
-
-    /// iterate db AND cache combined
-    fn iter_cur(&self, prefix: Prefix) -> IntoIter<Vec<u8>, Vec<u8>> {
-        // Iterate chain state
-        let mut kv_map = KVecMap::new();
-        self.state().iterate(
-            &prefix.begin(),
-            &prefix.end(),
-            IterOrder::Asc,
-            &mut |(k, v)| -> bool {
-                kv_map.insert(k, v);
-                false
-            },
-        );
-
-        // Iterate cache
-        self.state().iterate_cache(prefix.as_ref(), &mut kv_map);
-        kv_map.into_iter()
-    }
-
-    /// key exists or not. Returns false if deleted
-    fn exists(&self, key: &[u8]) -> Result<bool> {
-        self.state().exists(key)
-    }
-
-    /// KV touched or not in current block
-    fn touched(&self, key: &[u8]) -> bool {
-        self.state().touched(key)
-    }
-
-    /// get current height
-    fn height(&self) -> Result<u64> {
-        self.state().height()
-    }
-
-    /// dump data to json string. TBD!!
-    fn dump_state() -> Result<String> {
-        Ok(String::from(""))
-    }
-
-    //===========================write=============================
-    fn with_state_mut(&mut self, state: &'a mut State<D>) -> &mut Self {
-        self.set_state(state);
-        self
-    }
-
-    /// put/update object by key
-    fn set_obj<T>(&mut self, key: &[u8], obj: &T) -> Result<()>
-    where
-        T: ?Sized + Serialize,
-    {
-        let value = serde_json::to_vec(obj).c(d!())?;
-        self.set(key.as_ref(), value);
-        Ok(())
-    }
-
-    /// put/update KV
-    fn set(&mut self, key: &[u8], value: Vec<u8>) {
-        self.state_mut().set(key, value);
-    }
-
-    /// delete KV. Nothing happens if key not found
-    fn delete(&mut self, key: &[u8]) -> Result<()> {
-        self.state_mut().delete(key)
-    }
-}
+pub mod traits;
+mod util;
 
 pub struct PrefixedStore<'a, D: MerkleDB> {
     pfx: Prefix,
@@ -196,6 +47,7 @@ mod tests {
     use crate::state::ChainState;
     use parking_lot::RwLock;
     use rand::Rng;
+    use ruc::*;
     use std::sync::Arc;
     use std::{thread, time};
 
@@ -311,6 +163,43 @@ mod tests {
         fn pool_key(&self) -> Prefix {
             self.pfx.push(b"pool")
         }
+    }
+
+    #[test]
+    fn prefixed_store() {
+        // create store
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let mut state = State::new(cs);
+        let mut store = PrefixedStore::new("my_store", &mut state);
+        let hash0 = store.state().root_hash();
+
+        // set kv pairs and commit
+        store.set(b"k10", b"v10".to_vec());
+        store.set(b"k20", b"v20".to_vec());
+        let (hash1, _height) = store.state_mut().commit(1).unwrap();
+
+        // verify
+        assert_eq!(store.get(b"k10").unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(store.get(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_ne!(hash0, hash1);
+
+        // add, del and update
+        store.set(b"k10", b"v15".to_vec());
+        store.delete(b"k20").unwrap();
+        store.set(b"k30", b"v30".to_vec());
+
+        // verify
+        assert_eq!(store.get(b"k10").unwrap(), Some(b"v15".to_vec()));
+        assert_eq!(store.get(b"k20").unwrap(), None);
+        assert_eq!(store.get(b"k30").unwrap(), Some(b"v30".to_vec()));
+
+        // revert and verify
+        store.state_mut().discard_session();
+        assert_eq!(store.get(b"k10").unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(store.get(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(store.get(b"k30").unwrap(), None);
     }
 
     #[test]
