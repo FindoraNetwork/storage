@@ -127,7 +127,7 @@ impl MerkleDB for FinDB {
 }
 
 /// Converts KVEntry to BatchEntry
-fn to_batch<I: IntoIterator<Item = KVEntry>>(items: I) -> Vec<BatchEntry> {
+pub fn to_batch<I: IntoIterator<Item = KVEntry>>(items: I) -> Vec<BatchEntry> {
     let mut batch = Vec::new();
     for (key, val) in items {
         match val {
