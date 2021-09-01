@@ -4,10 +4,13 @@
 /// and RocksDB backend.
 ///
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
+use crate::store::Prefix;
 use merk::tree::{Tree, NULL_HASH};
 use ruc::*;
+use std::str;
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
+const SPLIT_BGN: &str = "_";
 
 /// Concrete ChainState struct containing a reference to an instance of MerkleDB, a name and
 /// current tree height.
@@ -16,6 +19,7 @@ where
     D: MerkleDB,
 {
     name: String,
+    ver_window: u64,
     db: D,
 }
 
@@ -30,7 +34,7 @@ where
     /// MerkleDB trait is assigned.
     ///
     /// Returns the implicit struct
-    pub fn new(db: D, name: String) -> Self {
+    pub fn new(db: D, name: String, ver_window: u64) -> Self {
         let mut db_name = "chain-state";
         if !name.is_empty() {
             db_name = name.as_str();
@@ -38,6 +42,7 @@ where
 
         ChainState {
             name: db_name.to_string(),
+            ver_window,
             db,
         }
     }
@@ -126,6 +131,103 @@ where
         }
     }
 
+    /// Queries the Aux DB for existence of a key.
+    ///
+    /// Returns a bool wrapped in a result as the query involves DB access.
+    pub fn exists_aux(&self, key: &[u8]) -> Result<bool> {
+        match self.get_aux(key).c(d!())? {
+            Some(_) => Ok(true),
+            None => Ok(false),
+        }
+    }
+
+    /// Deletes the auxiliary keys stored with a prefix < ( height - ver_window ),
+    /// if the ver_window == 0 then the function returns without deleting any keys.
+    ///
+    /// The main purpose is to save memory on the disk
+    fn prune_aux_batch(&self, height: u64, batch: &mut KVBatch) -> Result<()> {
+        if self.ver_window == 0 || height < self.ver_window + 1 {
+            return Ok(());
+        }
+        //Build range keys for window limits
+        let window_start_height = (height - self.ver_window).to_string();
+        let pruning_height = (height - self.ver_window - 1).to_string();
+
+        let new_window_limit = Prefix::new(window_start_height.as_bytes());
+        let old_window_limit = Prefix::new(pruning_height.as_bytes());
+
+        //Range all auxiliary keys at pruning height
+        self.iterate_aux(
+            &old_window_limit.begin(),
+            &old_window_limit.end(),
+            IterOrder::Asc,
+            &mut |(k, v)| -> bool {
+                let key: Vec<_> = str::from_utf8(&k)
+                    .unwrap_or("")
+                    .split(SPLIT_BGN)
+                    .collect();
+                if key.len() < 2 {
+                    return false;
+                }
+                println!("KEY: {:?}", key);
+                //If the key doesn't already exist in the window start height, need to add it
+                if !self
+                    .exists_aux(new_window_limit.push(key[1].as_bytes()).as_ref())
+                    .unwrap_or(false)
+                {
+                    // Add the key to new window limit height
+                    batch.push((
+                        new_window_limit
+                            .clone()
+                            .push(key[1].as_ref())
+                            .as_ref()
+                            .to_vec(),
+                        Some(v),
+                    ));
+                }
+                //Delete the key from the batch
+                batch.push((
+                    old_window_limit
+                        .clone()
+                        .push(key[1].as_ref())
+                        .as_ref()
+                        .to_vec(),
+                    None,
+                ));
+                false
+            },
+        );
+        Ok(())
+    }
+
+    /// Builds a new batch which is a copy of the original commit with the current height
+    /// prefixed to each key.
+    ///
+    /// This is to keep a versioned history of KV pairs.
+    fn build_aux_batch(&self, height: u64, batch: &mut KVBatch) -> Result<KVBatch> {
+        let height_str = height.to_string();
+        let prefix = Prefix::new(height_str.as_bytes());
+
+        // Copy keys from batch to aux batch while prefixing them with the current height
+        let mut aux_batch: KVBatch = batch
+            .iter()
+            .map(|(k, v)| {
+                (
+                    prefix.clone().push(k.clone().as_slice()).as_ref().to_vec(),
+                    v.clone(),
+                )
+            })
+            .collect();
+
+        // Store the current height in auxiliary batch
+        aux_batch.push((HEIGHT_KEY.to_vec(), Some(height_str.as_bytes().to_vec())));
+
+        // Prune Aux data in the db
+        self.prune_aux_batch(height, &mut aux_batch)?;
+
+        Ok(aux_batch)
+    }
+
     /// Commits a key value batch to the MerkleDB.
     ///
     /// The current height is updated in the ChainState as well as in the auxiliary data of the DB.
@@ -141,17 +243,11 @@ where
         height: u64,
         flush: bool,
     ) -> Result<(Vec<u8>, u64)> {
-        // Update height value in batch
-        let height_str = height.to_string();
-
         batch.sort();
+        let aux = self.build_aux_batch(height, &mut batch).c(d!())?;
+
         self.db.put_batch(batch).c(d!())?;
-        self.db
-            .commit(
-                vec![(HEIGHT_KEY.to_vec(), Some(height_str.as_bytes().to_vec()))],
-                flush,
-            )
-            .c(d!())?;
+        self.db.commit(aux, flush).c(d!())?;
 
         Ok((self.root_hash(), height))
     }
@@ -190,9 +286,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::db::{IterOrder, KValue, MerkleDB, TempFinDB};
+    use crate::db::{IterOrder, KVBatch, KValue, MerkleDB, TempFinDB};
     use crate::state::chain_state;
     use std::thread;
+    const VER_WINDOW: u64 = 100;
 
     #[test]
     fn test_new_chain_state() {
@@ -201,7 +298,7 @@ mod tests {
         let fdb = TempFinDB::open(path).expect("failed to open db");
 
         //Create new Chain State with new database
-        let _cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let _cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
     }
 
     #[test]
@@ -221,7 +318,7 @@ mod tests {
             .unwrap();
 
         //Create new Chain State with new database
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
 
         assert_eq!(cs.get(&b"k10".to_vec()).unwrap(), Some(b"v10".to_vec()));
         assert_eq!(cs.get(&b"k20".to_vec()).unwrap(), Some(b"v20".to_vec()));
@@ -259,7 +356,7 @@ mod tests {
             .unwrap();
 
         //Create new Chain State with new database
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
         let mut func_iter = |entry: KValue| {
             println!("Key: {:?}, Value: {:?}", entry.0, entry.1);
             //Assert Keys are equal
@@ -304,7 +401,7 @@ mod tests {
         fdb.commit(batch, false).unwrap();
 
         //Create new Chain State with new database
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
         let mut func_iter = |entry: KValue| {
             println!("Key: {:?}, Value: {:?}", entry.0, entry.1);
             //Assert Keys are equal
@@ -340,7 +437,7 @@ mod tests {
             .unwrap();
 
         //Create new Chain State with new database
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
 
         assert_eq!(cs.exists(&b"k10".to_vec()).unwrap(), true);
         assert_eq!(cs.exists(&b"k20".to_vec()).unwrap(), true);
@@ -366,7 +463,7 @@ mod tests {
         let batch_clone = batch.clone();
 
         //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
 
         // Commit batch to db, in production the flush would be true
         let result = cs.commit(batch, 55, false).unwrap();
@@ -405,7 +502,7 @@ mod tests {
         fdb.commit(vec![(b"height".to_vec(), Some(b"25".to_vec()))], false)
             .unwrap();
 
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
         let height_aux = cs.get_aux(&b"height".to_vec()).unwrap();
         let height = cs.get(&b"height".to_vec());
 
@@ -428,7 +525,7 @@ mod tests {
         ];
 
         //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
         let (root_hash1, _) = cs.commit(batch, 32, false).unwrap();
 
         let batch2 = vec![
@@ -456,7 +553,7 @@ mod tests {
         ];
 
         //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string());
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
 
         assert_eq!(cs.height().unwrap(), 0u64);
 
@@ -472,5 +569,91 @@ mod tests {
 
         let (_, _) = cs.commit(batch, 34, false).unwrap();
         assert_eq!(cs.height().unwrap(), 34);
+    }
+
+    #[test]
+    fn test_build_aux_batch() {
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let number_of_batches = 21;
+        let batch_size = 7;
+        //Create new Chain State with new database
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 10);
+
+        //Create Several batches (More than Window size) with different keys and values
+        for i in 1..number_of_batches {
+            let mut batch: KVBatch = KVBatch::new();
+            for j in 0..batch_size {
+                let key = format!("key-{}", j);
+                let val = format!("val-{}", i);
+                batch.push((Vec::from(key), Some(Vec::from(val))));
+            }
+
+            //Commit the new batch
+            let _ = cs.commit(batch, i as u64, false);
+
+            //After each commit verify the values by using get_aux
+            for k in 0..batch_size {
+                let key = format!("{}_key-{}", i, k);
+                let value = format!("val-{}", i);
+                assert_eq!(
+                    cs.get_aux(key.as_bytes()).unwrap().unwrap().as_slice(),
+                    value.as_bytes()
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn test_prune_aux_batch() {
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let number_of_batches = 21;
+        let batch_size = 7;
+        //Create new Chain State with new database
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 10);
+
+        //Create Several batches (More than Window size) with different keys and values
+        for i in 1..number_of_batches {
+            let mut batch: KVBatch = KVBatch::new();
+            for j in 0..batch_size {
+                let key = format!("key-{}", j);
+                let val = format!("val-{}", i);
+                batch.push((Vec::from(key), Some(Vec::from(val))));
+            }
+
+            //Add a KV to the batch at a random height, 5 in this case
+            if i == 5 {
+                batch.push((b"random-key".to_vec(), Some(b"random-value".to_vec())));
+            }
+
+            //Commit the new batch
+            let _ = cs.commit(batch, i as u64, false);
+
+            //After each commit verify the values by using get_aux
+            for k in 0..batch_size {
+                let key = format!("{}_key-{}", i, k);
+                let value = format!("val-{}", i);
+                assert_eq!(
+                    cs.get_aux(key.as_bytes()).unwrap().unwrap().as_slice(),
+                    value.as_bytes()
+                )
+            }
+        }
+
+        //Make sure random key is found within the current window.
+        //This will be current height - window size = 10 in this case.
+        assert_eq!(
+            cs.get_aux(b"10_random-key").unwrap(),
+            Some(b"random-value".to_vec())
+        );
+
+        //Query aux values that are older than the window size to confirm batches were pruned
+        for i in 1..10 {
+            for k in 0..batch_size {
+                let key = format!("{}_key-{}", i, k);
+                assert_eq!(cs.get_aux(key.as_bytes()).unwrap(), None)
+            }
+        }
     }
 }
