@@ -31,6 +31,8 @@ pub trait MerkleDB {
 
     fn commit(&mut self, aux: KVBatch, flush: bool) -> Result<()>;
 
+    fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()>;
+
     fn as_mut(&mut self) -> &mut Self {
         self
     }
@@ -122,6 +124,14 @@ impl MerkleDB for FinDB {
                 .flush()
                 .map_err(|_| eg!("Failed to flush memtables"))?;
         }
+        Ok(())
+    }
+
+    /// Takes a snapshot with checkpoint
+    fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.db
+            .snapshot(path)
+            .map_err(|_| eg!("Failed to take snapshot"))?;
         Ok(())
     }
 }
