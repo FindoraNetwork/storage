@@ -62,7 +62,6 @@ impl RocksDB {
     fn default_db_opts() -> rocksdb::Options {
         let mut opts = rocksdb::Options::default();
         opts.create_if_missing(true);
-        opts.increase_parallelism(num_cpus::get() as i32);
         opts.set_allow_mmap_writes(true);
         opts.set_allow_mmap_reads(true);
         opts.create_missing_column_families(true);
