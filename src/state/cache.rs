@@ -26,7 +26,6 @@ impl<'a> Iterator for CacheIter<'a> {
 pub struct SessionedCache {
     cur: KVMap,
     base: KVMap,
-    checker: Box<dyn KVChecker>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -35,21 +34,12 @@ impl SessionedCache {
         SessionedCache {
             cur: KVMap::new(),
             base: KVMap::new(),
-            checker: Box::new(MerkChecker),
-        }
-    }
-
-    pub fn new_nc() -> Self {
-        SessionedCache {
-            cur: KVMap::new(),
-            base: KVMap::new(),
-            checker: Box::new(NoneChecker),
         }
     }
 
     /// put/update value by key
     pub fn put(&mut self, key: &[u8], value: Vec<u8>) -> bool {
-        if self.checker.check_kv(key, &value) {
+        if MerkChecker::check_kv(key, &value) {
             self.cur.insert(key.to_owned(), Some(value));
             return true;
         }
@@ -198,7 +188,7 @@ impl SessionedCache {
 
 /// KV checker
 pub trait KVChecker {
-    fn check_kv(&self, _key: &[u8], _value: &[u8]) -> bool {
+    fn check_kv(_key: &[u8], _value: &[u8]) -> bool {
         true
     }
 }
@@ -208,7 +198,7 @@ impl KVChecker for NoneChecker {}
 
 pub struct MerkChecker;
 impl KVChecker for MerkChecker {
-    fn check_kv(&self, key: &[u8], value: &[u8]) -> bool {
+    fn check_kv(key: &[u8], value: &[u8]) -> bool {
         // check key
         if key.len() > MAX_MERK_KEY_LEN as usize {
             let key_str = String::from_utf8(key.to_vec()).map_or("non-utf8-key".to_owned(), |k| k);
