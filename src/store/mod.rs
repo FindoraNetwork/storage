@@ -176,8 +176,8 @@ mod tests {
         let hash0 = store.state().root_hash();
 
         // set kv pairs and commit
-        store.set(b"k10", b"v10".to_vec());
-        store.set(b"k20", b"v20".to_vec());
+        store.set(b"k10", b"v10".to_vec()).unwrap();
+        store.set(b"k20", b"v20".to_vec()).unwrap();
         let (hash1, _height) = store.state_mut().commit(1).unwrap();
 
         // verify
@@ -186,9 +186,9 @@ mod tests {
         assert_ne!(hash0, hash1);
 
         // add, del and update
-        store.set(b"k10", b"v15".to_vec());
+        store.set(b"k10", b"v15".to_vec()).unwrap();
         store.delete(b"k20").unwrap();
-        store.set(b"k30", b"v30".to_vec());
+        store.set(b"k30", b"v30".to_vec()).unwrap();
 
         // verify
         assert_eq!(store.get(b"k10").unwrap(), Some(b"v15".to_vec()));
@@ -590,9 +590,9 @@ mod tests {
         let mut state = State::new(cs.clone());
         let mut store = PrefixedStore::new("testStore", &mut state);
 
-        store.set(b"validator_fra2221", b"200".to_vec());
-        store.set(b"validator_fra2222", b"300".to_vec());
-        store.set(b"validator_fra2223", b"500".to_vec());
+        store.set(b"validator_fra2221", b"200".to_vec()).unwrap();
+        store.set(b"validator_fra2222", b"300".to_vec()).unwrap();
+        store.set(b"validator_fra2223", b"500".to_vec()).unwrap();
 
         assert_eq!(
             store.get(b"validator_fra2221").unwrap(),
@@ -606,7 +606,7 @@ mod tests {
             Some(b"300".to_vec())
         );
 
-        store.set(b"validator_fra2224", b"700".to_vec());
+        store.set(b"validator_fra2224", b"700".to_vec()).unwrap();
         let prefix = Prefix::new(b"validator");
 
         let res_iter = store.iter_cur(prefix);
