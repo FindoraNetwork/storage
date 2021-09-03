@@ -6,6 +6,10 @@ use std::iter::Iterator;
 pub type KVMap = BTreeMap<Vec<u8>, Option<Vec<u8>>>;
 pub type KVecMap = BTreeMap<Vec<u8>, Vec<u8>>;
 
+/// size limits on KEY and VALUE
+const MAX_MERK_KEY_LEN: u8 = u8::MAX;
+const MAX_MERK_VAL_LEN: u16 = u16::MAX;
+
 /// cache iterator
 pub struct CacheIter<'a> {
     iter: std::collections::btree_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>,
@@ -34,8 +38,12 @@ impl SessionedCache {
     }
 
     /// put/update value by key
-    pub fn put(&mut self, key: &[u8], value: Vec<u8>) {
-        self.cur.insert(key.to_owned(), Some(value));
+    pub fn put(&mut self, key: &[u8], value: Vec<u8>) -> bool {
+        if MerkChecker::check_kv(key, &value) {
+            self.cur.insert(key.to_owned(), Some(value));
+            return true;
+        }
+        false
     }
 
     /// delete key-pair by marking as None
@@ -175,6 +183,37 @@ impl SessionedCache {
     /// rebases cur KVs onto base
     fn rebase(&mut self) {
         self.base = self.cur.clone();
+    }
+}
+
+/// KV checker
+pub trait KVChecker {
+    fn check_kv(_key: &[u8], _value: &[u8]) -> bool {
+        true
+    }
+}
+
+pub struct NoneChecker;
+impl KVChecker for NoneChecker {}
+
+pub struct MerkChecker;
+impl KVChecker for MerkChecker {
+    fn check_kv(key: &[u8], value: &[u8]) -> bool {
+        // check key
+        if key.len() > MAX_MERK_KEY_LEN as usize {
+            let key_str = String::from_utf8(key.to_vec()).map_or("non-utf8-key".to_owned(), |k| k);
+            println!("Invalid key length: {}", key_str);
+            return false;
+        }
+
+        // check value
+        if value.len() > MAX_MERK_VAL_LEN as usize {
+            let val_str =
+                String::from_utf8(value.to_vec()).map_or("non-utf8-value".to_owned(), |v| v);
+            println!("Invalid value length: {}", val_str);
+            return false;
+        }
+        true
     }
 }
 
