@@ -38,15 +38,6 @@ where
         }
     }
 
-    /// Creates a State with a new cache(without KV checker) and reference to the ChainState
-    pub fn new_nc(cs: Arc<RwLock<ChainState<D>>>) -> Self {
-        State {
-            // lock whole State object for now
-            chain_state: cs,
-            cache: SessionedCache::new_nc(),
-        }
-    }
-
     /// Returns the chain state of the store.
     pub fn chain_state(&self) -> Arc<RwLock<ChainState<D>>> {
         self.chain_state.clone()
@@ -297,7 +288,7 @@ mod tests {
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
         let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
-        let mut state = State::new_nc(cs);
+        let mut state = State::new(cs);
 
         // Set maximum valid key and value
         let max_key = "k".repeat(u8::MAX as usize).as_bytes().to_vec();
@@ -320,7 +311,7 @@ mod tests {
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
         let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
-        let mut state = State::new_nc(cs);
+        let mut state = State::new(cs);
 
         // Set a big value
         let big_val = "v".repeat(u16::MAX as usize + 1).as_bytes().to_vec();
