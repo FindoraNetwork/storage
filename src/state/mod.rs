@@ -3,11 +3,15 @@
 ///
 pub mod cache;
 pub mod chain_state;
+pub mod chain_state_rocks;
+pub mod rocks_state;
 
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
 pub use cache::{KVecMap, SessionedCache};
 pub use chain_state::ChainState;
+pub use chain_state_rocks::RocksChainState;
 use parking_lot::RwLock;
+pub use rocks_state::RocksState;
 use ruc::*;
 use std::sync::Arc;
 
