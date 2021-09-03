@@ -280,7 +280,7 @@ mod tests {
         // Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string(), VER_WINDOW)));
         let mut state = State::new(cs);
 
         // Set maximum valid key and value
@@ -304,7 +304,7 @@ mod tests {
         // Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string(), VER_WINDOW)));
         let mut state = State::new(cs);
 
         // Set maximum valid key and value
@@ -327,7 +327,7 @@ mod tests {
         // Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string(), VER_WINDOW)));
         let mut state = State::new(cs);
 
         // Set a big value
