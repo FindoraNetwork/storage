@@ -1,113 +1,159 @@
-use crate::db::{IRocksDB, MerkleDB};
-use crate::state::{RocksState, State};
-use crate::store::store_rocks::{IRocksStore, RStated};
-use crate::store::traits::{Stated, Store};
-pub use util::Prefix;
+use crate::db::{IRocksDB, IterOrder, KValue};
+use crate::state::RocksState;
+use crate::store::Prefix;
+use ruc::*;
+use serde::{de, Serialize};
 
-pub mod store_rocks;
-pub mod traits;
-mod util;
+/// statable
+pub trait RStated<'a, D: IRocksDB> {
+    /// set state
+    fn set_state(&mut self, state: &'a mut RocksState<D>);
 
-/// Merkle-based prefixed store
-pub struct PrefixedStore<'a, D: MerkleDB> {
-    pfx: Prefix,
-    state: &'a mut State<D>,
+    /// get state
+    fn state(&self) -> &RocksState<D>;
+
+    /// get mut state
+    fn state_mut(&mut self) -> &mut RocksState<D>;
+
+    /// get base prefix
+    fn prefix(&self) -> Prefix;
 }
 
-impl<'a, D: MerkleDB> Stated<'a, D> for PrefixedStore<'a, D> {
-    fn set_state(&mut self, state: &'a mut State<D>) {
-        self.state = state;
+/// store for mempool/consensus/query connection
+pub trait IRocksStore<'a, D: IRocksDB>: RStated<'a, D> {
+    /// get value. Returns None if deleted
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.state().get(key)
     }
 
-    fn state(&self) -> &State<D> {
-        &self.state
-    }
-
-    fn state_mut(&mut self) -> &mut State<D> {
-        self.state
-    }
-
-    fn prefix(&self) -> Prefix {
-        self.pfx.clone()
-    }
-}
-
-impl<'a, D: MerkleDB> Store<'a, D> for PrefixedStore<'a, D> {}
-
-impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
-    pub fn new(prefix: &str, state: &'a mut State<D>) -> Self {
-        PrefixedStore {
-            pfx: Prefix::new(prefix.as_bytes()),
-            state,
+    /// get object by key
+    ///
+    /// returns deserialized object if key exists or None otherwise
+    fn get_obj<T>(&self, key: &[u8]) -> Result<Option<T>>
+    where
+        T: de::DeserializeOwned,
+    {
+        match self.get(key).c(d!())? {
+            Some(value) => {
+                let obj = self.from_vec(&value).c(d!())?;
+                Ok(Some(obj))
+            }
+            None => Ok(None),
         }
     }
-}
 
-/// Non-merkle prefixed store
-pub struct RocksStore<'a, D: IRocksDB> {
-    pfx: Prefix,
-    state: &'a mut RocksState<D>,
-}
-
-impl<'a, D: IRocksDB> RStated<'a, D> for RocksStore<'a, D> {
-    fn set_state(&mut self, state: &'a mut RocksState<D>) {
-        self.state = state;
-    }
-    fn state(&self) -> &RocksState<D> {
-        &self.state
-    }
-    fn state_mut(&mut self) -> &mut RocksState<D> {
-        self.state
-    }
-    fn prefix(&self) -> Prefix {
-        self.pfx.clone()
-    }
-}
-
-impl<'a, D: IRocksDB> IRocksStore<'a, D> for RocksStore<'a, D> {}
-
-impl<'a, D: IRocksDB> RocksStore<'a, D> {
-    pub fn new(prefix: &str, state: &'a mut RocksState<D>) -> Self {
-        RocksStore {
-            pfx: Prefix::new(prefix.as_bytes()),
-            state,
+    /// get object by key
+    ///
+    /// return deserialized object if key exists or default object otherwise
+    fn get_obj_or<T>(&self, key: &[u8], default: T) -> Result<T>
+    where
+        T: de::DeserializeOwned,
+    {
+        match self.get(key).c(d!())? {
+            Some(value) => {
+                let obj = serde_json::from_slice::<T>(value.as_ref()).c(d!())?;
+                Ok(obj)
+            }
+            None => Ok(default),
         }
+    }
+
+    /// put/update KV
+    fn set(&mut self, key: &[u8], value: Vec<u8>) {
+        self.state_mut().set(key, value);
+    }
+
+    /// put/update object by key
+    fn set_obj<T>(&mut self, key: &[u8], obj: &T) -> Result<()>
+    where
+        T: ?Sized + Serialize,
+    {
+        let value = serde_json::to_vec(obj).c(d!())?;
+        self.set(key.as_ref(), value);
+        Ok(())
+    }
+
+    /// delete KV. Nothing happens if key not found
+    fn delete(&mut self, key: &[u8]) -> Result<()> {
+        self.state_mut().delete(key)
+    }
+
+    /// iterate db only
+    fn iter_db(&self, prefix: Prefix, asc: bool, func: &mut dyn FnMut(KValue) -> bool) -> bool {
+        let mut iter_order = IterOrder::Desc;
+        if asc {
+            iter_order = IterOrder::Asc
+        }
+        self.state()
+            .iterate(&prefix.begin(), &prefix.end(), iter_order, func)
+    }
+
+    /// key exists or not. Returns false if deleted
+    fn exists(&self, key: &[u8]) -> Result<bool> {
+        self.state().exists(key)
+    }
+
+    /// KV touched or not in current block
+    fn touched(&self, key: &[u8]) -> bool {
+        self.state().touched(key)
+    }
+
+    /// get current height
+    fn height(&self) -> Result<u64> {
+        self.state().height()
+    }
+
+    fn with_state(&mut self, state: &'a mut RocksState<D>) -> &Self {
+        self.set_state(state);
+        self
+    }
+
+    fn with_state_mut(&mut self, state: &'a mut RocksState<D>) -> &mut Self {
+        self.set_state(state);
+        self
+    }
+
+    /// deserialize object from Vec<u8>
+    fn from_vec<T>(&self, value: &[u8]) -> Result<T>
+    where
+        T: de::DeserializeOwned,
+    {
+        let obj = serde_json::from_slice::<T>(value).c(d!())?;
+        Ok(obj)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::TempFinDB;
-    use crate::state::ChainState;
+    use crate::db::TempRocksDB;
+    use crate::state::RocksChainState;
+    use crate::store::{IRocksStore, RocksStore};
     use parking_lot::RwLock;
     use rand::Rng;
-    use ruc::*;
     use std::sync::Arc;
     use std::{thread, time};
 
-    const VER_WINDOW: u64 = 100;
-
     // a example store
-    struct StakeStore<'a, D: MerkleDB> {
+    struct StakeStore<'a, D: IRocksDB> {
         pfx: Prefix,
-        state: &'a mut State<D>,
+        state: &'a mut RocksState<D>,
     }
 
-    // impl Store
-    impl<'a, D: MerkleDB> Store<'a, D> for StakeStore<'a, D> {}
+    // impl IRocksStore
+    impl<'a, D: IRocksDB> IRocksStore<'a, D> for StakeStore<'a, D> {}
 
-    // impl Stated
-    impl<'a, D: MerkleDB> Stated<'a, D> for StakeStore<'a, D> {
-        fn set_state(&mut self, state: &'a mut State<D>) {
+    // impl RStated
+    impl<'a, D: IRocksDB> RStated<'a, D> for StakeStore<'a, D> {
+        fn set_state(&mut self, state: &'a mut RocksState<D>) {
             self.state = state;
         }
 
-        fn state(&self) -> &State<D> {
+        fn state(&self) -> &RocksState<D> {
             &self.state
         }
 
-        fn state_mut(&mut self) -> &mut State<D> {
+        fn state_mut(&mut self) -> &mut RocksState<D> {
             self.state
         }
 
@@ -116,9 +162,9 @@ mod tests {
         }
     }
 
-    // impl Store business interfaces
-    impl<'a, D: MerkleDB> StakeStore<'a, D> {
-        pub fn new(prefix: &str, state: &'a mut State<D>) -> Self {
+    // impl IRocksStore business interfaces
+    impl<'a, D: IRocksDB> StakeStore<'a, D> {
+        pub fn new(prefix: &str, state: &'a mut RocksState<D>) -> Self {
             StakeStore {
                 pfx: Prefix::new(prefix.as_bytes()),
                 state,
@@ -203,33 +249,30 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_store() {
+    fn rocks_store() {
         // create store
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
+        let fdb = TempRocksDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(RocksChainState::new(
             fdb,
             "test_db".to_string(),
-            VER_WINDOW,
         )));
-        let mut state = State::new(cs);
-        let mut store = PrefixedStore::new("my_store", &mut state);
-        let hash0 = store.state().root_hash();
+        let mut state = RocksState::new(cs);
+        let mut store = RocksStore::new("my_store", &mut state);
 
         // set kv pairs and commit
-        store.set(b"k10", b"v10".to_vec()).unwrap();
-        store.set(b"k20", b"v20".to_vec()).unwrap();
-        let (hash1, _height) = store.state_mut().commit(1).unwrap();
+        store.set(b"k10", b"v10".to_vec());
+        store.set(b"k20", b"v20".to_vec());
+        let _height = store.state_mut().commit(1).unwrap();
 
         // verify
         assert_eq!(store.get(b"k10").unwrap(), Some(b"v10".to_vec()));
         assert_eq!(store.get(b"k20").unwrap(), Some(b"v20".to_vec()));
-        assert_ne!(hash0, hash1);
 
         // add, del and update
-        store.set(b"k10", b"v15".to_vec()).unwrap();
+        store.set(b"k10", b"v15".to_vec());
         store.delete(b"k20").unwrap();
-        store.set(b"k30", b"v30".to_vec()).unwrap();
+        store.set(b"k30", b"v30".to_vec());
 
         // verify
         assert_eq!(store.get(b"k10").unwrap(), Some(b"v15".to_vec()));
@@ -245,15 +288,14 @@ mod tests {
 
     #[test]
     fn store_stake() {
-        // create State
+        // create RocksState
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
+        let fdb = TempRocksDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(RocksChainState::new(
             fdb,
             "findora_db".to_string(),
-            VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = RocksState::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
         // default stake MUST be zero
@@ -290,15 +332,14 @@ mod tests {
 
     #[test]
     fn store_unstake() {
-        // create State
+        // create RocksState
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
+        let fdb = TempRocksDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(RocksChainState::new(
             fdb,
             "findora_db".to_string(),
-            VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = RocksState::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
         // stake some coins
@@ -324,15 +365,14 @@ mod tests {
 
     #[test]
     fn store_stake_unstake_too_fast() {
-        // create State
+        // create RocksState
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
+        let fdb = TempRocksDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(RocksChainState::new(
             fdb,
             "findora_db".to_string(),
-            VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = RocksState::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
         // stake some coins at height 1
@@ -369,15 +409,14 @@ mod tests {
 
     #[test]
     fn store_iter_db() {
-        // create State
+        // create RocksState
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
+        let fdb = TempRocksDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(RocksChainState::new(
             fdb,
             "findora_db".to_string(),
-            VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = RocksState::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
         // stake some coins
@@ -387,7 +426,7 @@ mod tests {
         store.stake("fra4455", 400).unwrap();
 
         // commit block 1
-        let (hash1, height) = store.state_mut().commit(1).unwrap();
+        let height = store.state_mut().commit(1).unwrap();
         assert_eq!(height, 1);
 
         // unstake some coins in session of block 2
@@ -415,9 +454,8 @@ mod tests {
         assert_eq!(store.get_pool().unwrap(), 630);
 
         // commit block 2
-        let (hash2, height) = store.state_mut().commit(2).unwrap();
+        let height = store.state_mut().commit(2).unwrap();
         assert_eq!(height, 2);
-        assert_ne!(hash1, hash2);
 
         // check stakes after committing block 2
         let expected = vec![
@@ -435,62 +473,17 @@ mod tests {
         assert_eq!(actual, expected);
         assert_eq!(store.get_pool().unwrap(), 630);
     }
-    #[test]
-    fn store_iter_cur() {
-        // create State
-        let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
-            fdb,
-            "findora_db".to_string(),
-            VER_WINDOW,
-        )));
-        let mut check = State::new(cs);
-        let mut store = StakeStore::new("stake", &mut check);
-
-        // stake some coins and commit block 1
-        store.stake("fra1111", 100).unwrap();
-        store.state_mut().commit(1).unwrap();
-
-        // stake, unstake, delete and commit tx session
-        store.unstake("fra1111", 100).unwrap();
-        assert!(store.delete(store.stake_key("fra1111").as_ref()).is_ok());
-        store.stake("fra2222", 200).unwrap();
-        store.stake("fra3333", 300).unwrap();
-        let _res = store.state.commit_session();
-
-        // stake, unstake again
-        store.stake("fra44555", 400).unwrap();
-        store.stake("fra55667", 500).unwrap();
-
-        // check cached stakes before committing tx session
-        let kvs: Vec<_> = store.iter_cur(store.prefix()).collect();
-        let expected = vec![
-            (b"stake_pool".to_vec(), b"1400".to_vec()),
-            (b"stake_validator_fra2222".to_vec(), b"200".to_vec()),
-            (b"stake_validator_fra3333".to_vec(), b"300".to_vec()),
-            (b"stake_validator_fra44555".to_vec(), b"400".to_vec()),
-            (b"stake_validator_fra55667".to_vec(), b"500".to_vec()),
-        ];
-        assert_eq!(kvs, expected);
-
-        // check cached stakes after committing tx session
-        let _res = store.state.commit_session();
-        let kvs: Vec<_> = store.iter_cur(store.prefix()).collect();
-        assert_eq!(kvs, expected);
-    }
 
     #[test]
     fn store_threading() {
-        // create State
+        // create RocksState
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
+        let fdb = TempRocksDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(RocksChainState::new(
             fdb,
             "findora_db".to_string(),
-            VER_WINDOW,
         )));
-        let mut state = State::new(cs.clone());
+        let mut state = RocksState::new(cs.clone());
         let mut store = StakeStore::new("stake", &mut state);
 
         // stake initial coins and commit
@@ -504,7 +497,7 @@ mod tests {
         for v in validators.iter() {
             store.stake(v, 1000000).unwrap();
         }
-        let (hash, height) = store.state_mut().commit(1).unwrap();
+        let height = store.state_mut().commit(1).unwrap();
         assert_eq!(1, height);
 
         // read/write times for each thread
@@ -516,7 +509,7 @@ mod tests {
         let cs_1 = cs.clone();
         threads.push(thread::spawn(move || {
             // create store
-            let mut query = State::new(cs_1.clone());
+            let mut query = RocksState::new(cs_1.clone());
             let store = StakeStore::new("stake", &mut query);
 
             // starts
@@ -537,12 +530,12 @@ mod tests {
             }
         }));
 
-        // thread 2: query
+        // thread 2: check_tx
         let cs_2 = cs.clone();
         threads.push(thread::spawn(move || {
             // create store
-            let mut query = State::new(cs_2.clone());
-            let store = StakeStore::new("stake", &mut query);
+            let mut check = RocksState::new(cs_2.clone());
+            let store = StakeStore::new("stake", &mut check);
 
             let mut reads = 0;
             while reads < times {
@@ -565,44 +558,16 @@ mod tests {
             }
         }));
 
-        // thread 3: check_tx
-        let cs_3 = cs.clone();
-        threads.push(thread::spawn(move || {
-            // create store
-            let mut check = State::new(cs_3.clone());
-            let store = StakeStore::new("stake", &mut check);
-
-            let mut reads = 0;
-            while reads < times {
-                thread::sleep(time::Duration::from_micros(1));
-
-                // iterates commited staking amounts
-                let mut total = 0_u64;
-                let pfx_v = store.prefix().push(b"validator");
-                for (_, v) in store.iter_cur(pfx_v) {
-                    let amt = store.from_vec::<u64>(&v);
-                    total += amt.unwrap();
-                }
-                let height = store.height().unwrap();
-                let amount_pool = store.get_pool().unwrap();
-                assert!(height >= 1);
-                assert!(total > 0);
-                assert!(amount_pool > 0);
-                reads += 1;
-            }
-        }));
-
         // thread 4: deliver_tx
         let vldts_2 = validators;
-        let cs_4 = cs;
+        let cs_3 = cs;
         threads.push(thread::spawn(move || {
             // create store
-            let mut deliver = State::new(cs_4.clone());
+            let mut deliver = RocksState::new(cs_3.clone());
             let mut store = StakeStore::new("stake", &mut deliver);
 
             // starts
             let mut rng = rand::thread_rng();
-            let mut hash = store.state().root_hash();
             let mut height = store.height().unwrap();
 
             // commit blocks [2...times]
@@ -618,10 +583,8 @@ mod tests {
                     assert!(store.unstake(addr, amt).is_ok());
                 }
                 height += 1;
-                let (hash_new, height_new) = store.state_mut().commit(height).unwrap();
+                let height_new = store.state_mut().commit(height).unwrap();
                 assert_eq!(height, height_new);
-                assert_ne!(hash, hash_new);
-                hash = hash_new;
             }
         }));
 
@@ -632,7 +595,6 @@ mod tests {
 
         // checks height, hash
         assert_eq!(times, store.height().unwrap());
-        assert_ne!(hash, store.state().root_hash());
 
         // check amounts
         let mut total = 0_u64;
@@ -647,52 +609,41 @@ mod tests {
     }
 
     #[test]
-    fn test_prefixed_store() {
-        // create State
+    fn test_rocks_store() {
+        // create RocksState
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
+        let fdb = TempRocksDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(RocksChainState::new(
             fdb,
             "findora_db".to_string(),
-            VER_WINDOW,
         )));
-        let mut state = State::new(cs.clone());
-        let mut store = PrefixedStore::new("testStore", &mut state);
+        let mut state = RocksState::new(cs.clone());
+        let mut store = RocksStore::new("testStore", &mut state);
 
-        store.set(b"validator_fra2221", b"200".to_vec()).unwrap();
-        store.set(b"validator_fra2222", b"300".to_vec()).unwrap();
-        store.set(b"validator_fra2223", b"500".to_vec()).unwrap();
+        store.set(b"validator_fra2221", b"200".to_vec());
+        store.set(b"validator_fra2222", b"300".to_vec());
+        store.set(b"validator_fra2223", b"500".to_vec());
 
         assert_eq!(
             store.get(b"validator_fra2221").unwrap(),
             Some(b"200".to_vec())
         );
 
-        let (_, _) = store.state.commit(12).unwrap();
+        let _ = store.state.commit(12).unwrap();
 
         assert_eq!(
             store.get(b"validator_fra2222").unwrap(),
             Some(b"300".to_vec())
         );
 
-        store.set(b"validator_fra2224", b"700".to_vec()).unwrap();
-        let prefix = Prefix::new(b"validator");
-
-        let res_iter = store.iter_cur(prefix);
-        let list: Vec<_> = res_iter.collect();
-
-        assert_eq!(list.len(), 4);
-        assert_eq!(
-            store.get(b"validator_fra2224").unwrap(),
-            Some(b"700".to_vec())
-        );
+        store.set(b"validator_fra2224", b"700".to_vec());
         assert_eq!(store.exists(b"validator_fra2224").unwrap(), true);
 
         let _ = store.delete(b"validator_fra2224");
         assert_eq!(store.get(b"validator_fra2224").unwrap(), None);
         assert_eq!(store.exists(b"validator_fra2224").unwrap(), false);
 
-        let (_, _) = store.state.commit(13).unwrap();
+        let _ = store.state.commit(13).unwrap();
         assert_eq!(
             store.get(b"validator_fra2221").unwrap(),
             Some(b"200".to_vec())

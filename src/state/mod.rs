@@ -3,11 +3,15 @@
 ///
 pub mod cache;
 pub mod chain_state;
+pub mod chain_state_rocks;
+pub mod rocks_state;
 
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
 pub use cache::{KVecMap, SessionedCache};
 pub use chain_state::ChainState;
+pub use chain_state_rocks::RocksChainState;
 use parking_lot::RwLock;
+pub use rocks_state::RocksState;
 use ruc::*;
 use std::sync::Arc;
 
@@ -78,8 +82,12 @@ where
     }
 
     /// Sets a key value pair in the cache
-    pub fn set(&mut self, key: &[u8], value: Vec<u8>) {
-        self.cache.put(key, value);
+    pub fn set(&mut self, key: &[u8], value: Vec<u8>) -> Result<()> {
+        if self.cache.put(key, value) {
+            Ok(())
+        } else {
+            Err(eg!("Invalid key-value pair detected."))
+        }
     }
 
     /// Deletes a key from the State.
@@ -186,8 +194,8 @@ mod tests {
         let mut state = State::new(cs.clone());
 
         //Set some kv pairs
-        state.set(b"prefix_validator_1", b"v10".to_vec());
-        state.set(b"prefix_delegator_1", b"v20".to_vec());
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_delegator_1", b"v20".to_vec()).unwrap();
 
         //Get the values
         assert_eq!(
@@ -224,8 +232,8 @@ mod tests {
         let mut state = State::new(cs);
 
         //Set some kv pairs
-        state.set(b"prefix_validator_1", b"v10".to_vec());
-        state.set(b"prefix_delegator_1", b"v20".to_vec());
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_delegator_1", b"v20".to_vec()).unwrap();
 
         //Get the values
         assert_eq!(state.exists(b"prefix_validator_1").unwrap(), true);
@@ -252,8 +260,8 @@ mod tests {
         let mut state = State::new(cs);
 
         //Set some kv pairs
-        state.set(b"prefix_validator_1", b"v10".to_vec());
-        state.set(b"prefix_delegator_1", b"v20".to_vec());
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_delegator_1", b"v20".to_vec()).unwrap();
 
         //Get the values
         assert_eq!(
@@ -265,6 +273,69 @@ mod tests {
             Some(b"v20".to_vec())
         );
         assert_eq!(state.get(b"prefix_validator_2").unwrap(), None);
+    }
+
+    #[test]
+    fn test_set_big_kv_checked() {
+        // Setup
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let mut state = State::new(cs);
+
+        // Set maximum valid key and value
+        let max_key = "k".repeat(u8::MAX as usize).as_bytes().to_vec();
+        let max_val = "v".repeat(u16::MAX as usize).as_bytes().to_vec();
+        state.set(&max_key, max_val.clone()).unwrap();
+        assert_eq!(state.get(&max_key).unwrap(), Some(max_val));
+
+        // Set invalid key and value
+        let big_key = "k".repeat(u8::MAX as usize + 1).as_bytes().to_vec();
+        let big_val = "v".repeat(u16::MAX as usize + 1).as_bytes().to_vec();
+        assert!(state.set(&big_key, b"v10".to_vec()).is_err());
+        assert!(state.set(b"key10", big_val).is_err());
+        assert_eq!(state.get(&big_key).unwrap(), None);
+        assert_eq!(state.get(b"key10").unwrap(), None);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_big_key_unchecked_panic() {
+        // Setup
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let mut state = State::new(cs);
+
+        // Set maximum valid key and value
+        let max_key = "k".repeat(u8::MAX as usize).as_bytes().to_vec();
+        let max_val = "v".repeat(u16::MAX as usize).as_bytes().to_vec();
+        state.set(&max_key, max_val.clone()).unwrap();
+        assert_eq!(state.get(&max_key).unwrap(), Some(max_val));
+
+        // Set a big key
+        let big_key = "k".repeat(u8::MAX as usize + 1).as_bytes().to_vec();
+        assert!(state.set(&big_key, b"v10".to_vec()).is_ok());
+
+        // Panic on commit
+        state.commit(1).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_big_value_unchecked_panic() {
+        // Setup
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let mut state = State::new(cs);
+
+        // Set a big value
+        let big_val = "v".repeat(u16::MAX as usize + 1).as_bytes().to_vec();
+        assert!(state.set(b"key10", big_val).is_ok());
+
+        // Panic on commit
+        state.commit(1).unwrap();
     }
 
     #[test]
@@ -280,9 +351,9 @@ mod tests {
         let mut state = State::new(cs);
 
         //Set some kv pairs
-        state.set(b"prefix_validator_1", b"v10".to_vec());
-        state.set(b"prefix_validator_2", b"v20".to_vec());
-        state.set(b"prefix_validator_3", b"v30".to_vec());
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_2", b"v20".to_vec()).unwrap();
+        state.set(b"prefix_validator_3", b"v30".to_vec()).unwrap();
 
         //Get the values
         assert_eq!(
@@ -307,7 +378,7 @@ mod tests {
             Some(b"v10".to_vec())
         );
 
-        state.set(b"prefix_validator_4", b"v40".to_vec());
+        state.set(b"prefix_validator_4", b"v40".to_vec()).unwrap();
         let _res = state.delete(b"prefix_validator_4");
 
         println!(
@@ -346,9 +417,9 @@ mod tests {
         let mut state = State::new(cs);
 
         //Set some kv pairs
-        state.set(b"prefix_validator_1", b"v10".to_vec());
-        state.set(b"prefix_validator_2", b"v20".to_vec());
-        state.set(b"prefix_validator_3", b"v30".to_vec());
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_2", b"v20".to_vec()).unwrap();
+        state.set(b"prefix_validator_3", b"v30".to_vec()).unwrap();
 
         let _res = state.commit(89);
 
@@ -370,14 +441,14 @@ mod tests {
         let mut state = State::new(cs);
 
         //Set some kv pairs
-        state.set(b"prefix_validator_1", b"v10".to_vec());
-        state.set(b"prefix_validator_2", b"v10".to_vec());
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_2", b"v10".to_vec()).unwrap();
 
         //Commit state to db
         let (app_hash1, height1) = state.commit(90).unwrap();
 
         //Modify a value in the db
-        state.set(b"prefix_validator_2", b"v20".to_vec());
+        state.set(b"prefix_validator_2", b"v20".to_vec()).unwrap();
         assert_eq!(height1, 90);
 
         //Commit state to db
@@ -408,14 +479,14 @@ mod tests {
         let mut state = State::new(cs);
 
         //Set some kv pairs
-        state.set(b"prefix_validator_1", b"v10".to_vec());
-        state.set(b"prefix_validator_2", b"v10".to_vec());
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_2", b"v10".to_vec()).unwrap();
 
         //Commit state to db
         let (app_hash1, _height) = state.commit(90).unwrap();
 
         //Modify a value in the db
-        state.set(b"prefix_validator_2", b"v20".to_vec());
+        state.set(b"prefix_validator_2", b"v20".to_vec()).unwrap();
 
         //Commit state to db
         let (app_hash2, _height) = state.commit(91).unwrap();
@@ -443,14 +514,14 @@ mod tests {
 
         let mut count = 0;
 
-        state.set(b"prefix_validator_1", b"v10".to_vec());
-        state.set(b"prefix_validator_2", b"v10".to_vec());
-        state.set(b"prefix_3", b"v10".to_vec());
-        state.set(b"prefix_4", b"v10".to_vec());
-        state.set(b"prefix_validator_5", b"v10".to_vec());
-        state.set(b"prefix_validator_6", b"v10".to_vec());
-        state.set(b"prefix_7", b"v10".to_vec());
-        state.set(b"prefix_validator_8", b"v10".to_vec());
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_2", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_3", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_4", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_5", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_6", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_7", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_8", b"v10".to_vec()).unwrap();
 
         // ----------- Commit state to db and clear cache -----------
         let res1 = state.commit(55).unwrap();
