@@ -4,6 +4,7 @@
 /// and RocksDB backend.
 ///
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
+use crate::state::cache::KVMap;
 use crate::store::Prefix;
 use merk::tree::{Tree, NULL_HASH};
 use ruc::*;
@@ -166,12 +167,10 @@ where
             &old_window_limit.end(),
             IterOrder::Asc,
             &mut |(k, v)| -> bool {
-                let key: Vec<_> = str::from_utf8(&k).unwrap_or("").split(SPLIT_BGN).collect();
-                if key.len() < 3 {
+                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                if raw_key.is_empty() {
                     return false;
                 }
-                let raw_key = key[2..].join(SPLIT_BGN);
-
                 //If the key doesn't already exist in the window start height, need to add it
                 if !self
                     .exists_aux(new_window_limit.push(raw_key.as_bytes()).as_ref())
@@ -188,7 +187,6 @@ where
                     ));
                 }
                 //Delete the key from the batch
-                //TODO: Need to set the value to designated tombstone instead of None
                 batch.push((
                     old_window_limit
                         .clone()
@@ -280,6 +278,17 @@ where
         format!("{:020}", height)
     }
 
+    fn get_raw_versioned_key(key: &[u8]) -> Result<String> {
+        let key: Vec<_> = str::from_utf8(key)
+            .c(d!("key parse error"))?
+            .split(SPLIT_BGN)
+            .collect();
+        if key.len() < 3 {
+            return Err(eg!("invalid key pattern"));
+        }
+        Ok(key[2..].join(SPLIT_BGN))
+    }
+
     /// Returns the Name of the ChainState
     pub fn name(&self) -> &str {
         self.name.as_str()
@@ -290,14 +299,38 @@ where
         unimplemented!()
     }
 
-    pub fn build_state(&self, _height: u64) -> KVBatch {
-        //loop through height 1 to <height>
-        //Iterate aux for prefixed height
-        //Use session cache data structure to apply each KV
-        //If a tombstone for a value is found, remove the key from the cache
-        //Convert cache to batch and return it
+    pub fn build_state(&self, height: u64) -> KVBatch {
+        //New map to store KV pairs
+        let mut map = KVMap::new();
 
-        KVBatch::new()
+        let lower = Prefix::new("VER".as_bytes());
+        let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+
+        self.iterate_aux(
+            lower.begin().as_ref(),
+            upper.as_ref(),
+            IterOrder::Asc,
+            &mut |(k, v)| -> bool {
+                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                if raw_key.is_empty() {
+                    return false;
+                }
+                //If value was deleted in the version history, delete it in the map
+                if v.eq(TOMBSTONE.to_vec().as_slice()) {
+                    map.remove(raw_key.as_bytes());
+                } else {
+                    //update map with current KV
+                    map.insert(raw_key.as_bytes().to_vec(), Some(v));
+                }
+                false
+            },
+        );
+
+        let kvs: Vec<_> = map
+            .iter()
+            .map(|(k, v)| (Self::versioned_key(k, height), v.clone()))
+            .collect();
+        kvs
     }
 
     /// When creating a new chain-state instance, any residual aux data outside the current window
@@ -313,12 +346,17 @@ where
         }
 
         //Get batch for state at H = current_height - ver_window
+        let batch = self.build_state(current_height - self.ver_window);
         //Commit this batch at base height H
+        if self.db.commit(batch, true).is_err() {
+            println!("error building base chain state");
+            return;
+        }
 
         //Define upper and lower bounds for iteration
+        let lower = Prefix::new("VER".as_bytes());
         let upper = Prefix::new("VER".as_bytes())
             .push(Self::height_str(current_height - self.ver_window).as_bytes());
-        let lower = Prefix::new("VER".as_bytes());
 
         //Create an empty batch
         let mut batch = KVBatch::new();
@@ -345,6 +383,7 @@ mod tests {
     use crate::db::{FinDB, IterOrder, KVBatch, KValue, MerkleDB, TempFinDB};
     use crate::state::chain_state::TOMBSTONE;
     use crate::state::{chain_state, ChainState};
+    use rand::Rng;
     use std::thread;
 
     const VER_WINDOW: u64 = 100;
@@ -720,6 +759,65 @@ mod tests {
                 )
             }
         }
+    }
+
+    #[test]
+    fn test_build_state() {
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+
+        let mut rng = rand::thread_rng();
+        let mut keys = Vec::with_capacity(10);
+        for i in 0..10 {
+            keys.push(format!("key_{}", i));
+        }
+
+        //Apply several batches with select few keys at random
+        for h in 1..21 {
+            let mut batch = KVBatch::new();
+
+            //Build a random batch
+            for _ in 0..5 {
+                let rnd_key_idx = rng.gen_range(0..10);
+                let rnd_val = format!("val-{}", rng.gen_range(0..10));
+                batch.push((
+                    keys[rnd_key_idx].clone().into_bytes(),
+                    Some(rnd_val.into_bytes()),
+                ));
+            }
+
+            let _ = cs.commit(batch, h, false);
+        }
+
+        //Confirm the build_state function produces the same keys and values as the latest state.
+        let mut cs_batch = KVBatch::new();
+        let bound = crate::store::Prefix::new("key".as_bytes());
+        cs.iterate(
+            &bound.begin(),
+            &bound.end(),
+            IterOrder::Asc,
+            &mut |(k, v)| -> bool {
+                //Delete the key from aux db
+                cs_batch.push((k, Some(v)));
+                false
+            },
+        );
+
+        let built_batch: Vec<_> = cs
+            .build_state(20)
+            .iter()
+            .map(|(k, v)| {
+                (
+                    ChainState::<TempFinDB>::get_raw_versioned_key(k)
+                        .unwrap()
+                        .into_bytes(),
+                    v.clone(),
+                )
+            })
+            .collect();
+
+        assert!(cs_batch.eq(&built_batch))
     }
 
     #[test]
