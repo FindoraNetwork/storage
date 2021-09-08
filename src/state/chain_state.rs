@@ -11,6 +11,7 @@ use std::str;
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const SPLIT_BGN: &str = "_";
+const TOMBSTONE: [u8; 1] = [206u8];
 
 /// Concrete ChainState struct containing a reference to an instance of MerkleDB, a name and
 /// current tree height.
@@ -153,8 +154,8 @@ where
             return Ok(());
         }
         //Build range keys for window limits
-        let window_start_height = (height - self.ver_window).to_string();
-        let pruning_height = (height - self.ver_window - 1).to_string();
+        let window_start_height = Self::height_str(height - self.ver_window);
+        let pruning_height = Self::height_str(height - self.ver_window - 1);
 
         let new_window_limit = Prefix::new("VER".as_bytes()).push(window_start_height.as_bytes());
         let old_window_limit = Prefix::new("VER".as_bytes()).push(pruning_height.as_bytes());
@@ -187,13 +188,14 @@ where
                     ));
                 }
                 //Delete the key from the batch
+                //TODO: Need to set the value to designated tombstone instead of None
                 batch.push((
                     old_window_limit
                         .clone()
                         .push(raw_key.as_ref())
                         .as_ref()
                         .to_vec(),
-                    None,
+                    Some(TOMBSTONE.to_vec()),
                 ));
                 false
             },
@@ -206,22 +208,14 @@ where
     ///
     /// This is to keep a versioned history of KV pairs.
     fn build_aux_batch(&self, height: u64, batch: &mut KVBatch) -> Result<KVBatch> {
-        let height_str = height.to_string();
-        let prefix = Prefix::new("VER".as_bytes()).push(height_str.as_bytes());
-
         // Copy keys from batch to aux batch while prefixing them with the current height
         let mut aux_batch: KVBatch = batch
             .iter()
-            .map(|(k, v)| {
-                (
-                    prefix.clone().push(k.clone().as_slice()).as_ref().to_vec(),
-                    v.clone(),
-                )
-            })
+            .map(|(k, v)| (Self::versioned_key(k, height), v.clone()))
             .collect();
 
         // Store the current height in auxiliary batch
-        aux_batch.push((HEIGHT_KEY.to_vec(), Some(height_str.as_bytes().to_vec())));
+        aux_batch.push((HEIGHT_KEY.to_vec(), Some(height.to_string().into_bytes())));
 
         // Prune Aux data in the db
         self.prune_aux_batch(height, &mut aux_batch)?;
@@ -274,6 +268,18 @@ where
         Ok(0u64)
     }
 
+    pub fn versioned_key(key: &[u8], height: u64) -> Vec<u8> {
+        Prefix::new("VER".as_bytes())
+            .push(Self::height_str(height).as_bytes())
+            .push(key)
+            .as_ref()
+            .to_vec()
+    }
+
+    fn height_str(height: u64) -> String {
+        format!("{:020}", height)
+    }
+
     /// Returns the Name of the ChainState
     pub fn name(&self) -> &str {
         self.name.as_str()
@@ -282,6 +288,16 @@ where
     /// This function will prune the tree of spent transaction outputs to reduce memory usage
     pub fn prune_tree() {
         unimplemented!()
+    }
+
+    pub fn build_state(&self, _height: u64) -> KVBatch {
+        //loop through height 1 to <height>
+        //Iterate aux for prefixed height
+        //Use session cache data structure to apply each KV
+        //If a tombstone for a value is found, remove the key from the cache
+        //Convert cache to batch and return it
+
+        KVBatch::new()
     }
 
     /// When creating a new chain-state instance, any residual aux data outside the current window
@@ -296,19 +312,22 @@ where
             return;
         }
 
+        //Get batch for state at H = current_height - ver_window
+        //Commit this batch at base height H
+
         //Define upper and lower bounds for iteration
         let upper = Prefix::new("VER".as_bytes())
-            .push((current_height - self.ver_window).to_string().as_bytes());
-        let lower = Prefix::new("VER".as_bytes()).push(1.to_string().as_bytes());
+            .push(Self::height_str(current_height - self.ver_window).as_bytes());
+        let lower = Prefix::new("VER".as_bytes());
 
         //Create an empty batch
         let mut batch = KVBatch::new();
 
         //Iterate aux data and delete keys within bounds
         self.iterate_aux(
-            lower.as_ref(),
+            lower.begin().as_ref(),
             upper.as_ref(),
-            IterOrder::Desc,
+            IterOrder::Asc,
             &mut |(k, _v)| -> bool {
                 //Delete the key from aux db
                 batch.push((k, None));
@@ -324,8 +343,10 @@ where
 #[cfg(test)]
 mod tests {
     use crate::db::{FinDB, IterOrder, KVBatch, KValue, MerkleDB, TempFinDB};
-    use crate::state::chain_state;
+    use crate::state::chain_state::TOMBSTONE;
+    use crate::state::{chain_state, ChainState};
     use std::thread;
+
     const VER_WINDOW: u64 = 100;
 
     #[test]
@@ -631,10 +652,11 @@ mod tests {
 
             //After each commit verify the values by using get_aux
             for k in 0..batch_size {
-                let key = format!("VER_{}_key-{}", i, k);
+                let key =
+                    ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), i);
                 let value = format!("val-{}", i);
                 assert_eq!(
-                    cs.get_aux(key.as_bytes()).unwrap().unwrap().as_slice(),
+                    cs.get_aux(key.as_slice()).unwrap().unwrap(),
                     value.as_bytes()
                 )
             }
@@ -669,10 +691,11 @@ mod tests {
 
             //After each commit verify the values by using get_aux
             for k in 0..batch_size {
-                let key = format!("VER_{}_key-{}", i, k);
+                let key =
+                    ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), i);
                 let value = format!("val-{}", i);
                 assert_eq!(
-                    cs.get_aux(key.as_bytes()).unwrap().unwrap().as_slice(),
+                    cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
                     value.as_bytes()
                 )
             }
@@ -681,15 +704,20 @@ mod tests {
         //Make sure random key is found within the current window.
         //This will be current height - window size = 10 in this case.
         assert_eq!(
-            cs.get_aux(b"VER_10_random_key").unwrap(),
+            cs.get_aux(ChainState::<TempFinDB>::versioned_key(b"random_key", 10).as_slice())
+                .unwrap(),
             Some(b"random-value".to_vec())
         );
 
         //Query aux values that are older than the window size to confirm batches were pruned
         for i in 1..10 {
             for k in 0..batch_size {
-                let key = format!("VER_{}_key-{}", i, k);
-                assert_eq!(cs.get_aux(key.as_bytes()).unwrap(), None)
+                let key =
+                    ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), i);
+                assert_eq!(
+                    cs.get_aux(key.as_slice()).unwrap(),
+                    Some(TOMBSTONE.to_vec())
+                )
             }
         }
     }
@@ -726,16 +754,18 @@ mod tests {
         //Confirm keys older than new window size have been deleted
         for i in 1..(number_of_batches - new_window_size - 1) {
             for k in 0..batch_size {
-                let key = format!("VER_{}_key-{}", i, k);
-                assert_eq!(cs_new.get_aux(key.as_bytes()).unwrap(), None)
+                let key =
+                    ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), i);
+                assert_eq!(cs_new.get_aux(key.as_slice()).unwrap(), None)
             }
         }
 
         //Confirm keys within new window size still exist
         for i in (number_of_batches - new_window_size)..number_of_batches {
             for k in 0..batch_size {
-                let key = format!("VER_{}_key-{}", i, k);
-                assert!(cs_new.exists_aux(key.as_bytes()).unwrap())
+                let key =
+                    ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), i);
+                assert!(cs_new.exists_aux(key.as_slice()).unwrap())
             }
         }
     }
