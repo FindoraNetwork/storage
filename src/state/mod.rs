@@ -68,6 +68,10 @@ where
         cs.get(key)
     }
 
+    pub fn get_ver(&self, key: &[u8], height: u64) -> Option<Vec<u8>> {
+        self.chain_state.read().get_ver(key, height)
+    }
+
     /// Queries whether a key exists in the current state.
     ///
     /// First Checks the cache, returns true if found otherwise queries the chainState.

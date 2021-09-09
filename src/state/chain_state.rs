@@ -193,7 +193,7 @@ where
                         .push(raw_key.as_ref())
                         .as_ref()
                         .to_vec(),
-                    Some(TOMBSTONE.to_vec()),
+                    None,
                 ));
                 false
             },
@@ -209,7 +209,12 @@ where
         // Copy keys from batch to aux batch while prefixing them with the current height
         let mut aux_batch: KVBatch = batch
             .iter()
-            .map(|(k, v)| (Self::versioned_key(k, height), v.clone()))
+            .map(|(k, v)| {
+                (
+                    Self::versioned_key(k, height),
+                    v.clone().map_or(Some(TOMBSTONE.to_vec()), Some),
+                )
+            })
             .collect();
 
         // Store the current height in auxiliary batch
@@ -333,6 +338,28 @@ where
         kvs
     }
 
+    pub fn get_ver(&self, key: &[u8], height: u64) -> Option<Vec<u8>> {
+        //Set bounds for iteration
+        let upper = Self::versioned_key(key, height + 1);
+        let lower = Self::versioned_key(key, 1);
+
+        //Iterate in descending order from upper bound until a value is found
+        let mut result = None;
+        self.iterate_aux(
+            lower.as_ref(),
+            upper.as_ref(),
+            IterOrder::Desc,
+            &mut |(_k, v)| -> bool {
+                if v.eq(&TOMBSTONE) {
+                    return true;
+                }
+                result = Some(v);
+                true
+            },
+        );
+        result
+    }
+
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
     fn clean_aux_db(&mut self) {
@@ -381,7 +408,6 @@ where
 #[cfg(test)]
 mod tests {
     use crate::db::{FinDB, IterOrder, KVBatch, KValue, MerkleDB, TempFinDB};
-    use crate::state::chain_state::TOMBSTONE;
     use crate::state::{chain_state, ChainState};
     use rand::Rng;
     use std::thread;
@@ -753,10 +779,7 @@ mod tests {
             for k in 0..batch_size {
                 let key =
                     ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), i);
-                assert_eq!(
-                    cs.get_aux(key.as_slice()).unwrap(),
-                    Some(TOMBSTONE.to_vec())
-                )
+                assert_eq!(cs.get_aux(key.as_slice()).unwrap(), None,)
             }
         }
     }
@@ -866,5 +889,46 @@ mod tests {
                 assert!(cs_new.exists_aux(key.as_slice()).unwrap())
             }
         }
+    }
+
+    #[test]
+    fn test_get_ver() {
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path.clone()).expect("failed to open db");
+        //Create new Chain State with new database
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+
+        //Commit a single key at different heights and values
+        for height in 1..21 {
+            let mut batch = KVBatch::new();
+            if height == 3 {
+                batch.push((b"test_key".to_vec(), Some(b"test-val1".to_vec())));
+            }
+            if height == 7 {
+                //Deleted key at height 7
+                batch.push((b"test_key".to_vec(), None));
+            }
+            if height == 15 {
+                batch.push((b"test_key".to_vec(), Some(b"test-val2".to_vec())));
+            }
+
+            let _ = cs.commit(batch, height, false);
+        }
+
+        //Query the key at each version it was updated
+        assert_eq!(cs.get_ver(b"test_key", 3), Some(b"test-val1".to_vec()));
+        assert_eq!(cs.get_ver(b"test_key", 7), None);
+        assert_eq!(cs.get_ver(b"test_key", 15), Some(b"test-val2".to_vec()));
+
+        //Query the key between update versions
+        assert_eq!(cs.get_ver(b"test_key", 5), Some(b"test-val1".to_vec()));
+        assert_eq!(cs.get_ver(b"test_key", 17), Some(b"test-val2".to_vec()));
+        assert_eq!(cs.get_ver(b"test_key", 10), None);
+
+        //Query the key at a version it didn't exist
+        assert_eq!(cs.get_ver(b"test_key", 2), None);
+
+        //Query the key after it's been deleted
+        assert_eq!(cs.get_ver(b"test_key", 8), None);
     }
 }
