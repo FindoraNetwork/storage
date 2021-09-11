@@ -8,6 +8,8 @@ use crate::state::cache::KVMap;
 use crate::store::Prefix;
 use merk::tree::{Tree, NULL_HASH};
 use ruc::*;
+use std::iter::FromIterator;
+use std::path::Path;
 use std::str;
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
@@ -205,7 +207,7 @@ where
     /// prefixed to each key.
     ///
     /// This is to keep a versioned history of KV pairs.
-    fn build_aux_batch(&self, height: u64, batch: &mut KVBatch) -> Result<KVBatch> {
+    fn build_aux_batch(&self, height: u64, batch: &KVBatch) -> Result<KVBatch> {
         // Copy keys from batch to aux batch while prefixing them with the current height
         let mut aux_batch: KVBatch = batch
             .iter()
@@ -242,12 +244,78 @@ where
         flush: bool,
     ) -> Result<(Vec<u8>, u64)> {
         batch.sort();
-        let aux = self.build_aux_batch(height, &mut batch).c(d!())?;
+        let aux = self.build_aux_batch(height, &batch).c(d!())?;
 
         self.db.put_batch(batch).c(d!())?;
         self.db.commit(aux, flush).c(d!())?;
 
         Ok((self.root_hash(), height))
+    }
+
+    /// Export a copy of chain state on a specific height.
+    ///
+    /// * `cs` - The target chain state that holds the copy.
+    /// * `height` - On which height the copy will be taken. It MUST be in range `[cur_height - ver_window, cur_height]`.\
+    ///    Notes: Exported chain state holds less historical commits because `height <= cur_height`. `snapshot` is the
+    ///    preferred method to export a copy on current height.
+    ///
+    pub fn export(&self, cs: &mut Self, height: u64) -> Result<()> {
+        // Height must be in version window
+        let cur_height = self.height().c(d!())?;
+        let ver_range = (cur_height - self.ver_window)..=cur_height;
+        if !ver_range.contains(&height) {
+            return Err(eg!(format!(
+                "height MUST be in the range: [{}, {}].",
+                ver_range.start(),
+                ver_range.end()
+            )));
+        }
+
+        // Replay historical commit, if any, on every height
+        for h in *ver_range.start()..=height {
+            let mut kvs = KVMap::new();
+
+            // setup bounds
+            let lower = Prefix::new("VER".as_bytes()).push(Self::height_str(h).as_bytes());
+            let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(h + 1).as_bytes());
+
+            // collect commits on this height
+            self.iterate_aux(
+                &lower.begin(),
+                &upper.begin(),
+                IterOrder::Asc,
+                &mut |(k, v)| -> bool {
+                    let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                    if raw_key.is_empty() {
+                        return false;
+                    }
+
+                    if v.eq(&TOMBSTONE) {
+                        kvs.insert(raw_key.as_bytes().to_vec(), None);
+                    } else {
+                        kvs.insert(raw_key.as_bytes().to_vec(), Some(v));
+                    }
+                    false
+                },
+            );
+
+            // commit this batch
+            let batch = Vec::from_iter(kvs.into_iter());
+            if cs.commit(batch, h, true).is_err() {
+                let msg = format!("Replay failed on height {}", h);
+                return Err(eg!(msg));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Take a snapshot of chain state on a specific height.
+    ///
+    /// * `db` - The target database that holds the snapshot.
+    ///
+    pub fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.db.snapshot(path)
     }
 
     /// Calculate and returns current root hash of the Merkle tree
@@ -304,7 +372,7 @@ where
         unimplemented!()
     }
 
-    pub fn build_state(&self, height: u64) -> KVBatch {
+    pub fn build_state(&self, height: u64, with_version: bool) -> KVBatch {
         //New map to store KV pairs
         let mut map = KVMap::new();
 
@@ -321,7 +389,7 @@ where
                     return false;
                 }
                 //If value was deleted in the version history, delete it in the map
-                if v.eq(TOMBSTONE.to_vec().as_slice()) {
+                if v.eq(&TOMBSTONE) {
                     map.remove(raw_key.as_bytes());
                 } else {
                     //update map with current KV
@@ -331,11 +399,15 @@ where
             },
         );
 
-        let kvs: Vec<_> = map
-            .iter()
-            .map(|(k, v)| (Self::versioned_key(k, height), v.clone()))
-            .collect();
-        kvs
+        if with_version {
+            let kvs: Vec<_> = map
+                .into_iter()
+                .map(|(k, v)| (Self::versioned_key(&k, height), v))
+                .collect();
+            kvs
+        } else {
+            Vec::from_iter(map.into_iter())
+        }
     }
 
     pub fn get_ver(&self, key: &[u8], height: u64) -> Option<Vec<u8>> {
@@ -373,7 +445,7 @@ where
         }
 
         //Get batch for state at H = current_height - ver_window
-        let batch = self.build_state(current_height - self.ver_window);
+        let batch = self.build_state(current_height - self.ver_window, true);
         //Commit this batch at base height H
         if self.db.commit(batch, true).is_err() {
             println!("error building base chain state");
@@ -665,6 +737,40 @@ mod tests {
     }
 
     #[test]
+    fn test_root_hash_same_kvs_diff_commits() {
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path.clone()).expect("failed to open db");
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+
+        let batch = vec![
+            (b"k10".to_vec(), Some(b"v10".to_vec())),
+            (b"k70".to_vec(), Some(b"v70".to_vec())),
+        ];
+
+        // commit 3 KVs in single commit
+        let (root_hash1, _) = cs.commit(batch, 1, false).unwrap();
+
+        // another chain state commit same KVs in 2 commits
+        let path2 = format!("{}_2", path);
+        let fdb2 = TempFinDB::open(path2).expect("failed to open db");
+        let mut cs2 = chain_state::ChainState::new(fdb2, "test_db".to_string(), VER_WINDOW);
+
+        let batch2 = vec![(b"k10".to_vec(), Some(b"v11".to_vec()))];
+        let batch3 = vec![
+            (b"k10".to_vec(), Some(b"v10".to_vec())),
+            (b"k70".to_vec(), Some(b"v70".to_vec())),
+        ];
+
+        let (root_hash2, _) = cs2.commit(batch2, 2, false).unwrap();
+        let (root_hash3, _) = cs2.commit(batch3, 3, false).unwrap();
+
+        // verify hashes
+        assert_ne!(root_hash1, root_hash2);
+        assert_ne!(root_hash2, root_hash3);
+        assert_ne!(root_hash1, root_hash3);
+    }
+
+    #[test]
     fn test_height() {
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
@@ -828,7 +934,7 @@ mod tests {
         );
 
         let built_batch: Vec<_> = cs
-            .build_state(20)
+            .build_state(20, true)
             .iter()
             .map(|(k, v)| {
                 (
@@ -930,5 +1036,138 @@ mod tests {
 
         //Query the key after it's been deleted
         assert_eq!(cs.get_ver(b"test_key", 8), None);
+    }
+
+    fn commit_n_snapshot(
+        cs: &mut ChainState<TempFinDB>,
+        path: String,
+        height: u64,
+        batch: KVBatch,
+    ) -> (Vec<u8>, u64) {
+        let (hash, h) = cs.commit(batch, height, true).unwrap();
+        let path_cp = format!("{}_{}_snap", path, height);
+        cs.snapshot(path_cp).unwrap();
+        (hash, h)
+    }
+
+    fn compare_kv(l_cs: &ChainState<TempFinDB>, r_cs: &ChainState<TempFinDB>, key: &[u8]) {
+        assert_eq!(l_cs.get_aux(key).unwrap(), r_cs.get_aux(key).unwrap())
+    }
+
+    fn export_n_compare(cs: &mut ChainState<TempFinDB>, path: String, height: u64) {
+        // export
+        let exp_path = format!("{}_{}_exp", path, height);
+        let exp_fdb = TempFinDB::open(exp_path).expect("failed to open db export");
+        let mut exp_cs = ChainState::new(exp_fdb, "test_db".to_string(), 5);
+        cs.export(&mut exp_cs, height).unwrap();
+
+        // open corresponding snapshot
+        let snap_path = format!("{}_{}_snap", path, height);
+        let snap_fdb = TempFinDB::open(snap_path).expect("failed to open db snapshot");
+        let snap_cs = ChainState::new(snap_fdb, "test_db".to_string(), 5);
+
+        // compare height and KVs.
+        //We can't expect same root hash when state is built on truncated commit history
+        assert_eq!(exp_cs.height().unwrap(), snap_cs.height().unwrap());
+        assert_eq!(exp_cs.root_hash(), snap_cs.root_hash());
+        compare_kv(&exp_cs, &snap_cs, b"k10");
+        compare_kv(&exp_cs, &snap_cs, b"k20");
+        compare_kv(&exp_cs, &snap_cs, b"k30");
+        compare_kv(&exp_cs, &snap_cs, b"k40");
+        compare_kv(&exp_cs, &snap_cs, b"k50");
+        compare_kv(&exp_cs, &snap_cs, b"k60");
+    }
+
+    #[test]
+    fn test_snapshot() {
+        let path = thread::current().name().unwrap().to_owned();
+        let fdb = TempFinDB::open(path.clone()).expect("failed to open db");
+        let mut cs = ChainState::new(fdb, "test_db".to_string(), 5);
+
+        // commit block 1 and take snapshot 1
+        commit_n_snapshot(
+            &mut cs,
+            path.clone(),
+            1,
+            vec![(b"k10".to_vec(), Some(b"v10".to_vec()))],
+        );
+
+        // commit block 2 and take snapshot 2
+        commit_n_snapshot(
+            &mut cs,
+            path.clone(),
+            2,
+            vec![
+                (b"k10".to_vec(), Some(b"v11".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+        );
+
+        // commit block 3 and take snapshot 3
+        commit_n_snapshot(
+            &mut cs,
+            path.clone(),
+            3,
+            vec![
+                (b"k10".to_vec(), None),
+                (b"k30".to_vec(), Some(b"v30".to_vec())),
+            ],
+        );
+
+        // commit block 4 and take snapshot 4
+        commit_n_snapshot(
+            &mut cs,
+            path.clone(),
+            4,
+            vec![
+                (b"k10".to_vec(), Some(b"v13".to_vec())),
+                (b"k20".to_vec(), None),
+                (b"k30".to_vec(), Some(b"v36".to_vec())),
+                (b"k40".to_vec(), Some(b"v41".to_vec())),
+            ],
+        );
+
+        // commit block 5 and take snapshot 5
+        commit_n_snapshot(
+            &mut cs,
+            path.clone(),
+            5,
+            vec![
+                (b"k20".to_vec(), Some(b"v22".to_vec())),
+                (b"k30".to_vec(), None),
+                (b"k50".to_vec(), Some(b"v51".to_vec())),
+            ],
+        );
+
+        // commit block 6 and take snapshot 6
+        commit_n_snapshot(
+            &mut cs,
+            path.clone(),
+            6,
+            vec![
+                (b"k20".to_vec(), None),
+                (b"k30".to_vec(), Some(b"v37".to_vec())),
+                (b"k60".to_vec(), Some(b"v64".to_vec())),
+            ],
+        );
+
+        // export chain state on every height and compare
+        export_n_compare(&mut cs, path.clone(), 1);
+        export_n_compare(&mut cs, path.clone(), 2);
+        export_n_compare(&mut cs, path.clone(), 3);
+        export_n_compare(&mut cs, path.clone(), 4);
+        export_n_compare(&mut cs, path.clone(), 5);
+        export_n_compare(&mut cs, path.clone(), 6);
+
+        // export on invalid height 1
+        let exp_path = format!("{}_exp", path);
+        let exp_fdb = TempFinDB::open(exp_path).expect("failed to open db export");
+        let mut snap_cs = ChainState::new(exp_fdb, "test_db".to_string(), 5);
+        assert!(cs.export(&mut snap_cs, 0).is_err());
+        assert!(cs.export(&mut snap_cs, 7).is_err());
+
+        // clean up snapshot 1
+        let snap_path_1 = format!("{}_{}_snap", path, 1);
+        let _ = TempFinDB::open(snap_path_1).expect("failed to open db snapshot");
     }
 }
