@@ -206,22 +206,25 @@ where
     ///
     /// This is to keep a versioned history of KV pairs.
     fn build_aux_batch(&self, height: u64, batch: &mut KVBatch) -> Result<KVBatch> {
-        // Copy keys from batch to aux batch while prefixing them with the current height
-        let mut aux_batch: KVBatch = batch
-            .iter()
-            .map(|(k, v)| {
-                (
-                    Self::versioned_key(k, height),
-                    v.clone().map_or(Some(TOMBSTONE.to_vec()), Some),
-                )
-            })
-            .collect();
+        let mut aux_batch = KVBatch::new();
+        if self.ver_window != 0 {
+            // Copy keys from batch to aux batch while prefixing them with the current height
+            aux_batch = batch
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        Self::versioned_key(k, height),
+                        v.clone().map_or(Some(TOMBSTONE.to_vec()), Some),
+                    )
+                })
+                .collect();
+
+            // Prune Aux data in the db
+            self.prune_aux_batch(height, &mut aux_batch)?;
+        }
 
         // Store the current height in auxiliary batch
         aux_batch.push((HEIGHT_KEY.to_vec(), Some(height.to_string().into_bytes())));
-
-        // Prune Aux data in the db
-        self.prune_aux_batch(height, &mut aux_batch)?;
 
         Ok(aux_batch)
     }
@@ -271,6 +274,7 @@ where
         Ok(0u64)
     }
 
+    /// Build key Prefixed with Version height for Auxiliary data
     pub fn versioned_key(key: &[u8], height: u64) -> Vec<u8> {
         Prefix::new("VER".as_bytes())
             .push(Self::height_str(height).as_bytes())
@@ -279,10 +283,12 @@ where
             .to_vec()
     }
 
+    /// Build a height string for versioning history
     fn height_str(height: u64) -> String {
         format!("{:020}", height)
     }
 
+    /// Deconstruct versioned key and return parsed raw key
     fn get_raw_versioned_key(key: &[u8]) -> Result<String> {
         let key: Vec<_> = str::from_utf8(key)
             .c(d!("key parse error"))?
@@ -304,6 +310,9 @@ where
         unimplemented!()
     }
 
+    /// Build the chain-state from height 1 to height H
+    ///
+    /// Returns a batch with KV pairs valid at height H
     pub fn build_state(&self, height: u64) -> KVBatch {
         //New map to store KV pairs
         let mut map = KVMap::new();
@@ -338,6 +347,10 @@ where
         kvs
     }
 
+    /// Get the value of a key at a given height
+    ///
+    /// Returns the value of the given key at a particular height
+    /// Returns None if the key was deleted or invalid at height H
     pub fn get_ver(&self, key: &[u8], height: u64) -> Option<Vec<u8>> {
         //Set bounds for iteration
         let upper = Self::versioned_key(key, height + 1);
