@@ -6,8 +6,8 @@ The crate was designed to be the blockchain state database. It provides persiste
 
 ### FEATURES:
 - Key-value updates(in a transaction) applied to storage can be reverted if transaction fails.
-- Key-value updates(in a block) applied to storage can be reverted if block failes to commit.
-- Prefix-based key-value iteration on commited state.
+- Key-value updates(in a block) applied to storage can be reverted if block fails to commit.
+- Prefix-based key-value iteration on committed state.
 - Prefix-based key-value iteration on latest state.
 - Versioned key-value pairs available for queries. 
 - Entire chain-state available as a batch of key-value pairs at any height within version window.
