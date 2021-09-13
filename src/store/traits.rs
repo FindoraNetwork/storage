@@ -78,7 +78,7 @@ where
     }
 
     /// get value by version.
-    fn get_v(&self, key: &[u8], height: u64) -> Option<Vec<u8>> {
+    fn get_v(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
         self.state().get_ver(key, height)
     }
 
@@ -200,7 +200,7 @@ pub trait StatelessStore {
     }
 
     /// get value by version.
-    fn get_v<T: MerkleDB>(state: &State<T>, key: &[u8], height: u64) -> Option<Vec<u8>> {
+    fn get_v<T: MerkleDB>(state: &State<T>, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
         state.get_ver(key, height)
     }
 
