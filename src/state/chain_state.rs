@@ -318,7 +318,7 @@ where
 
     /// Take a snapshot of chain state on a specific height.
     ///
-    /// * `db` - The target database that holds the snapshot.
+    /// * `path` - The path of database that holds the snapshot.
     ///
     pub fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.db.snapshot(path)
@@ -1185,7 +1185,7 @@ mod tests {
         export_n_compare(&mut cs, path.clone(), 5);
         export_n_compare(&mut cs, path.clone(), 6);
 
-        // export on invalid height 1
+        // export on invalid heights
         let exp_path = format!("{}_exp", path);
         let exp_fdb = TempFinDB::open(exp_path).expect("failed to open db export");
         let mut snap_cs = ChainState::new(exp_fdb, "test_db".to_string(), 5);
