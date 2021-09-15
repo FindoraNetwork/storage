@@ -68,7 +68,7 @@ where
         cs.get(key)
     }
 
-    pub fn get_ver(&self, key: &[u8], height: u64) -> Option<Vec<u8>> {
+    pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
         self.chain_state.read().get_ver(key, height)
     }
 

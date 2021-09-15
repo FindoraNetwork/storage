@@ -174,9 +174,11 @@ where
                     return false;
                 }
                 //If the key doesn't already exist in the window start height, need to add it
+                //If the value of this key is a TOMBSTONE then we don't need to add it
                 if !self
                     .exists_aux(new_window_limit.push(raw_key.as_bytes()).as_ref())
                     .unwrap_or(false)
+                    && v.ne(&TOMBSTONE)
                 {
                     // Add the key to new window limit height
                     batch.push((
@@ -207,23 +209,27 @@ where
     /// prefixed to each key.
     ///
     /// This is to keep a versioned history of KV pairs.
+
     fn build_aux_batch(&self, height: u64, batch: &KVBatch) -> Result<KVBatch> {
-        // Copy keys from batch to aux batch while prefixing them with the current height
-        let mut aux_batch: KVBatch = batch
-            .iter()
-            .map(|(k, v)| {
-                (
-                    Self::versioned_key(k, height),
-                    v.clone().map_or(Some(TOMBSTONE.to_vec()), Some),
-                )
-            })
-            .collect();
+        let mut aux_batch = KVBatch::new();
+        if self.ver_window != 0 {
+            // Copy keys from batch to aux batch while prefixing them with the current height
+            aux_batch = batch
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        Self::versioned_key(k, height),
+                        v.clone().map_or(Some(TOMBSTONE.to_vec()), Some),
+                    )
+                })
+                .collect();
+
+            // Prune Aux data in the db
+            self.prune_aux_batch(height, &mut aux_batch)?;
+        }
 
         // Store the current height in auxiliary batch
         aux_batch.push((HEIGHT_KEY.to_vec(), Some(height.to_string().into_bytes())));
-
-        // Prune Aux data in the db
-        self.prune_aux_batch(height, &mut aux_batch)?;
 
         Ok(aux_batch)
     }
@@ -339,6 +345,7 @@ where
         Ok(0u64)
     }
 
+    /// Build key Prefixed with Version height for Auxiliary data
     pub fn versioned_key(key: &[u8], height: u64) -> Vec<u8> {
         Prefix::new("VER".as_bytes())
             .push(Self::height_str(height).as_bytes())
@@ -347,10 +354,12 @@ where
             .to_vec()
     }
 
+    /// Build a height string for versioning history
     fn height_str(height: u64) -> String {
         format!("{:020}", height)
     }
 
+    /// Deconstruct versioned key and return parsed raw key
     fn get_raw_versioned_key(key: &[u8]) -> Result<String> {
         let key: Vec<_> = str::from_utf8(key)
             .c(d!("key parse error"))?
@@ -372,6 +381,9 @@ where
         unimplemented!()
     }
 
+    /// Build the chain-state from height 1 to height H
+    ///
+    /// Returns a batch with KV pairs valid at height H
     pub fn build_state(&self, height: u64, with_version: bool) -> KVBatch {
         //New map to store KV pairs
         let mut map = KVMap::new();
@@ -410,26 +422,28 @@ where
         }
     }
 
-    pub fn get_ver(&self, key: &[u8], height: u64) -> Option<Vec<u8>> {
-        //Set bounds for iteration
-        let upper = Self::versioned_key(key, height + 1);
-        let lower = Self::versioned_key(key, 1);
-
+    /// Get the value of a key at a given height
+    ///
+    /// Returns the value of the given key at a particular height
+    /// Returns None if the key was deleted or invalid at height H
+    pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        //Need to set lower bound as the height can get very large
+        let mut lower_bound = 1;
+        if height > self.ver_window {
+            lower_bound = height - self.ver_window;
+        }
         //Iterate in descending order from upper bound until a value is found
         let mut result = None;
-        self.iterate_aux(
-            lower.as_ref(),
-            upper.as_ref(),
-            IterOrder::Desc,
-            &mut |(_k, v)| -> bool {
-                if v.eq(&TOMBSTONE) {
-                    return true;
+        for h in (lower_bound..height + 1).rev() {
+            let key = Self::versioned_key(key, h);
+            if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
+                if val.eq(&TOMBSTONE) {
+                    break;
                 }
-                result = Some(v);
-                true
-            },
-        );
-        result
+                result = Some(val);
+            }
+        }
+        Ok(result)
     }
 
     /// When creating a new chain-state instance, any residual aux data outside the current window
@@ -1022,20 +1036,32 @@ mod tests {
         }
 
         //Query the key at each version it was updated
-        assert_eq!(cs.get_ver(b"test_key", 3), Some(b"test-val1".to_vec()));
-        assert_eq!(cs.get_ver(b"test_key", 7), None);
-        assert_eq!(cs.get_ver(b"test_key", 15), Some(b"test-val2".to_vec()));
+        assert_eq!(
+            cs.get_ver(b"test_key", 3).unwrap(),
+            Some(b"test-val1".to_vec())
+        );
+        assert_eq!(cs.get_ver(b"test_key", 7).unwrap(), None);
+        assert_eq!(
+            cs.get_ver(b"test_key", 15).unwrap(),
+            Some(b"test-val2".to_vec())
+        );
 
         //Query the key between update versions
-        assert_eq!(cs.get_ver(b"test_key", 5), Some(b"test-val1".to_vec()));
-        assert_eq!(cs.get_ver(b"test_key", 17), Some(b"test-val2".to_vec()));
-        assert_eq!(cs.get_ver(b"test_key", 10), None);
+        assert_eq!(
+            cs.get_ver(b"test_key", 5).unwrap(),
+            Some(b"test-val1".to_vec())
+        );
+        assert_eq!(
+            cs.get_ver(b"test_key", 17).unwrap(),
+            Some(b"test-val2".to_vec())
+        );
+        assert_eq!(cs.get_ver(b"test_key", 10).unwrap(), None);
 
         //Query the key at a version it didn't exist
-        assert_eq!(cs.get_ver(b"test_key", 2), None);
+        assert_eq!(cs.get_ver(b"test_key", 2).unwrap(), None);
 
         //Query the key after it's been deleted
-        assert_eq!(cs.get_ver(b"test_key", 8), None);
+        assert_eq!(cs.get_ver(b"test_key", 8).unwrap(), None);
     }
 
     fn commit_n_snapshot(

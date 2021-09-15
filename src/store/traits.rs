@@ -77,6 +77,11 @@ where
         self.state().get(key)
     }
 
+    /// get value by version.
+    fn get_v(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        self.state().get_ver(key, height)
+    }
+
     /// iterate db only
     fn iter_db(&self, prefix: Prefix, asc: bool, func: &mut dyn FnMut(KValue) -> bool) -> bool {
         let mut iter_order = IterOrder::Desc;
@@ -192,6 +197,11 @@ pub trait StatelessStore {
     /// get value. Returns None if deleted
     fn get<T: MerkleDB>(state: &State<T>, key: &[u8]) -> Result<Option<Vec<u8>>> {
         state.get(key)
+    }
+
+    /// get value by version.
+    fn get_v<T: MerkleDB>(state: &State<T>, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        state.get_ver(key, height)
     }
 
     /// iterate db only
