@@ -172,9 +172,11 @@ where
                     return false;
                 }
                 //If the key doesn't already exist in the window start height, need to add it
+                //If the value of this key is a TOMBSTONE then we don't need to add it
                 if !self
                     .exists_aux(new_window_limit.push(raw_key.as_bytes()).as_ref())
                     .unwrap_or(false)
+                    && v.ne(&TOMBSTONE)
                 {
                     // Add the key to new window limit height
                     batch.push((
