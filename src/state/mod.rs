@@ -7,7 +7,7 @@ pub mod chain_state_rocks;
 pub mod rocks_state;
 
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
-pub use cache::{KVecMap, SessionedCache};
+pub use cache::{KVMap, KVecMap, SessionedCache};
 pub use chain_state::ChainState;
 pub use chain_state_rocks::RocksChainState;
 use parking_lot::RwLock;
@@ -158,6 +158,15 @@ where
     /// The current cache is rebased.
     pub fn discard_session(&mut self) {
         self.cache.discard()
+    }
+
+    /// Export a copy of chain state on a specific height.
+    ///
+    /// * `cs` - The target chain state that holds the copy.
+    /// * `height` - On which height the copy will be taken.
+    ///
+    pub fn export(&self, cs: &mut ChainState<D>, height: u64) -> Result<()> {
+        self.chain_state.read().export(cs, height)
     }
 
     /// Returns whether or not a key has been modified in the current block
