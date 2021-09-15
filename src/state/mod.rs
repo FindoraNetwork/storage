@@ -68,6 +68,10 @@ where
         cs.get(key)
     }
 
+    pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        self.chain_state.read().get_ver(key, height)
+    }
+
     /// Queries whether a key exists in the current state.
     ///
     /// First Checks the cache, returns true if found otherwise queries the chainState.
@@ -179,13 +183,18 @@ mod tests {
     use super::*;
     use crate::db::{KValue, TempFinDB};
     use std::thread;
+    const VER_WINDOW: u64 = 100;
 
     #[test]
     fn test_get() {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs.clone());
 
         //Set some kv pairs
@@ -219,7 +228,11 @@ mod tests {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -243,7 +256,11 @@ mod tests {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -267,7 +284,11 @@ mod tests {
         // Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         // Set maximum valid key and value
@@ -291,7 +312,11 @@ mod tests {
         // Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         // Set maximum valid key and value
@@ -314,7 +339,11 @@ mod tests {
         // Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         // Set a big value
@@ -330,7 +359,11 @@ mod tests {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -392,7 +425,11 @@ mod tests {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -412,7 +449,11 @@ mod tests {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -446,7 +487,11 @@ mod tests {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -476,7 +521,11 @@ mod tests {
     fn test_iterate() {
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
 
         let mut count = 0;

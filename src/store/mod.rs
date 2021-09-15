@@ -86,6 +86,8 @@ mod tests {
     use std::sync::Arc;
     use std::{thread, time};
 
+    const VER_WINDOW: u64 = 100;
+
     // a example store
     struct StakeStore<'a, D: MerkleDB> {
         pfx: Prefix,
@@ -205,7 +207,11 @@ mod tests {
         // create store
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
         let mut store = PrefixedStore::new("my_store", &mut state);
         let hash0 = store.state().root_hash();
@@ -242,7 +248,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -283,7 +293,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -313,7 +327,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -354,7 +372,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -418,7 +440,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -459,7 +485,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs.clone());
         let mut store = StakeStore::new("stake", &mut state);
 
@@ -621,7 +651,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs.clone());
         let mut store = PrefixedStore::new("testStore", &mut state);
 
