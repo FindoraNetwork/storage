@@ -6,7 +6,7 @@
 use crate::db::{IterOrder, KVBatch, KVEntry, KValue, MerkleDB};
 use crate::state::cache::KVMap;
 use crate::store::Prefix;
-use merk::tree::{Tree, NULL_HASH};
+use merk::tree::NULL_HASH;
 use ruc::*;
 use std::path::Path;
 use std::str;
@@ -80,11 +80,7 @@ impl<D: MerkleDB> ChainState<D> {
                 None => break,
             };
 
-            let kv = Tree::decode(kv_pair.0.to_vec(), &kv_pair.1);
-            let key = kv.key();
-            let value = kv.value();
-
-            let entry: KValue = (key.to_vec(), value.to_vec());
+            let entry = self.db.decode_kv(kv_pair);
             stop = func(entry);
         }
         true
@@ -547,11 +543,7 @@ mod tests {
         test_get_impl(gen_cs_rocks(path));
     }
 
-    #[test]
-    fn test_iterate() {
-        let path = thread::current().name().unwrap().to_owned();
-        let mut cs = gen_cs(path);
-
+    fn test_iterate_impl<D: MerkleDB>(mut cs: ChainState<D>) {
         let batch = vec![
             (b"k10".to_vec(), Some(b"v10".to_vec())),
             (b"k20".to_vec(), Some(b"v20".to_vec())),
@@ -588,45 +580,15 @@ mod tests {
     }
 
     #[test]
+    fn test_iterate() {
+        let path = thread::current().name().unwrap().to_owned();
+        test_iterate_impl(gen_cs(path));
+    }
+
+    #[test]
     fn test_iterate_rocks() {
         let path = thread::current().name().unwrap().to_owned();
-        let mut cs = gen_cs_rocks(path);
-
-        let batch = vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-            (b"k30".to_vec(), Some(b"v30".to_vec())),
-            (b"k40".to_vec(), Some(b"v40".to_vec())),
-            (b"k50".to_vec(), Some(b"v50".to_vec())),
-            (b"k60".to_vec(), Some(b"v60".to_vec())),
-            (b"k70".to_vec(), Some(b"v70".to_vec())),
-            (b"k80".to_vec(), Some(b"v80".to_vec())),
-        ];
-        let batch_clone = batch.clone();
-
-        // commit data
-        cs.commit(batch, 26, true).unwrap();
-
-        //Create new Chain State with new database
-        let mut index = 0;
-        let mut func_iter = |entry: KValue| {
-            println!("Key: {:?}, Value: {:?}", entry.0, entry.1);
-            //Assert Keys are equal
-            assert_eq!(entry.0, batch_clone[index].0);
-            //Assert Values are equal
-            assert_eq!(entry.1, batch_clone[index].1.clone().unwrap());
-
-            index += 1;
-            false
-        };
-
-        // chain state of RocksDB has to use iterate_aux
-        cs.iterate_aux(
-            &b"k10".to_vec(),
-            &b"k81".to_vec(),
-            IterOrder::Asc,
-            &mut func_iter,
-        );
+        test_iterate_impl(gen_cs_rocks(path));
     }
 
     fn test_exists_impl<D: MerkleDB>(mut cs: ChainState<D>) {
@@ -659,11 +621,7 @@ mod tests {
         test_exists_impl(gen_cs_rocks(path));
     }
 
-    #[test]
-    fn test_commit() {
-        let path = thread::current().name().unwrap().to_owned();
-        let mut cs = gen_cs(path);
-
+    fn test_commit_impl<D: MerkleDB>(mut cs: ChainState<D>) {
         let batch = vec![
             (b"k10".to_vec(), Some(b"v10".to_vec())),
             (b"k20".to_vec(), Some(b"v20".to_vec())),
@@ -699,42 +657,15 @@ mod tests {
     }
 
     #[test]
+    fn test_commit() {
+        let path = thread::current().name().unwrap().to_owned();
+        test_commit_impl(gen_cs(path));
+    }
+
+    #[test]
     fn test_commit_rocks() {
         let path = thread::current().name().unwrap().to_owned();
-        let mut cs = gen_cs_rocks(path);
-
-        let batch = vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-            (b"k30".to_vec(), Some(b"v30".to_vec())),
-            (b"k40".to_vec(), Some(b"v40".to_vec())),
-            (b"k50".to_vec(), Some(b"v50".to_vec())),
-            (b"k60".to_vec(), Some(b"v60".to_vec())),
-            (b"k70".to_vec(), Some(b"v70".to_vec())),
-            (b"k80".to_vec(), Some(b"v80".to_vec())),
-        ];
-        let batch_clone = batch.clone();
-
-        // Commit batch to db, in production the flush would be true
-        let result = cs.commit(batch, 55, false).unwrap();
-        assert_eq!(result.1, 55);
-
-        let mut index = 0;
-        let mut func_iter = |entry: KValue| {
-            //Assert Keys are equal
-            assert_eq!(entry.0, batch_clone[index].0);
-            //Assert Values are equal
-            assert_eq!(entry.1, batch_clone[index].1.clone().unwrap());
-
-            index += 1;
-            false
-        };
-        cs.iterate_aux(
-            &b"k10".to_vec(),
-            &b"k81".to_vec(),
-            IterOrder::Asc,
-            &mut func_iter,
-        );
+        test_commit_impl(gen_cs_rocks(path));
     }
 
     #[test]

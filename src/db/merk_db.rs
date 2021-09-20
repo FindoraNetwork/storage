@@ -1,5 +1,5 @@
-use crate::db::{to_batch, DBIter, IterOrder, KVBatch};
-use merk::{rocksdb, Merk};
+use crate::db::{to_batch, DBIter, IterOrder, KVBatch, KValue};
+use merk::{rocksdb, tree::Tree, Merk};
 use ruc::*;
 use std::path::Path;
 
@@ -22,6 +22,8 @@ pub trait MerkleDB {
     fn commit(&mut self, kvs: KVBatch, flush: bool) -> Result<()>;
 
     fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()>;
+
+    fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue;
 
     fn as_mut(&mut self) -> &mut Self {
         self
@@ -123,5 +125,11 @@ impl MerkleDB for FinDB {
             .snapshot(path)
             .map_err(|_| eg!("Failed to take snapshot"))?;
         Ok(())
+    }
+
+    /// Decode key value pair
+    fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
+        let kv = Tree::decode(kv_pair.0.to_vec(), &kv_pair.1);
+        (kv.key().to_vec(), kv.value().to_vec())
     }
 }

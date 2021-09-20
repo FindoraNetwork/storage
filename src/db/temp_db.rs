@@ -1,4 +1,4 @@
-use crate::db::{DBIter, FinDB, IterOrder, KVBatch, MerkleDB};
+use crate::db::{DBIter, FinDB, IterOrder, KVBatch, KValue, MerkleDB};
 use ruc::*;
 use std::env::temp_dir;
 use std::ops::{Deref, DerefMut};
@@ -64,6 +64,10 @@ impl MerkleDB for TempFinDB {
 
     fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.deref().snapshot(path)
+    }
+
+    fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
+        self.deref().decode_kv(kv_pair)
     }
 }
 

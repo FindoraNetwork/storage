@@ -2,9 +2,9 @@ use merk::Op;
 use ruc::*;
 use std::path::{Path, PathBuf};
 
-use crate::db::{rocksdb, to_batch, DBIter, IterOrder, KVBatch, MerkleDB};
+use crate::db::{rocksdb, to_batch, DBIter, IterOrder, KVBatch, KValue, MerkleDB};
 
-const CF_AUX: &str = "aux";
+const CF_STATE: &str = "state";
 
 /// Rocks db
 pub struct RocksDB {
@@ -38,7 +38,7 @@ impl RocksDB {
         let mut path_buf = PathBuf::new();
         path_buf.push(path);
         let cfs = vec![rocksdb::ColumnFamilyDescriptor::new(
-            CF_AUX,
+            CF_STATE,
             Self::default_db_opts(),
         )];
         let db = rocksdb::DB::open_cf_descriptors(&db_opts, &path_buf, cfs).c(d!())?;
@@ -61,8 +61,8 @@ impl RocksDB {
         mode: rocksdb::IteratorMode,
         readopts: rocksdb::ReadOptions,
     ) -> rocksdb::DBIterator {
-        let aux_cf = self.db.cf_handle(CF_AUX).unwrap();
-        self.db.iterator_cf_opt(aux_cf, readopts, mode)
+        let state_cf = self.db.cf_handle(CF_STATE).unwrap();
+        self.db.iterator_cf_opt(state_cf, readopts, mode)
     }
 }
 
@@ -71,7 +71,7 @@ impl MerkleDB for RocksDB {
     fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
         // update cf in batch
         let batch_kvs = to_batch(kvs);
-        let state_cf = self.db.cf_handle(CF_AUX).unwrap();
+        let state_cf = self.db.cf_handle(CF_STATE).unwrap();
         let mut batch = rocksdb::WriteBatch::default();
         for (key, value) in batch_kvs {
             match value {
@@ -90,7 +90,7 @@ impl MerkleDB for RocksDB {
 
     /// Gets a value for the given key. If the key is not found, `None` is returned.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if let Some(cf) = self.db.cf_handle(CF_AUX) {
+        if let Some(cf) = self.db.cf_handle(CF_STATE) {
             Ok(self.db.get_cf(cf, key).c(d!("get data failed"))?)
         } else {
             Ok(None)
@@ -139,5 +139,10 @@ impl MerkleDB for RocksDB {
         cp.create_checkpoint(&path)
             .c(d!("Failed to take snapshot"))?;
         Ok(())
+    }
+
+    /// Decode key value pair
+    fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
+        (kv_pair.0.to_vec(), kv_pair.1.to_vec())
     }
 }

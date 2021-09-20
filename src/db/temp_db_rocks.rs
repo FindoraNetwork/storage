@@ -1,4 +1,4 @@
-use crate::db::{DBIter, IterOrder, KVBatch, MerkleDB, RocksDB};
+use crate::db::{DBIter, IterOrder, KVBatch, KValue, MerkleDB, RocksDB};
 use ruc::*;
 use std::env::temp_dir;
 use std::ops::{Deref, DerefMut};
@@ -60,6 +60,10 @@ impl MerkleDB for TempRocksDB {
 
     fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.deref().snapshot(path)
+    }
+
+    fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
+        self.deref().decode_kv(kv_pair)
     }
 }
 
