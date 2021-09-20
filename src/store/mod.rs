@@ -1,10 +1,8 @@
-use crate::db::{IRocksDB, MerkleDB};
-use crate::state::{RocksState, State};
-use crate::store::store_rocks::{IRocksStore, RStated};
+use crate::db::MerkleDB;
+use crate::state::State;
 use crate::store::traits::{Stated, Store};
 pub use util::Prefix;
 
-pub mod store_rocks;
 pub mod traits;
 mod util;
 
@@ -37,38 +35,6 @@ impl<'a, D: MerkleDB> Store<'a, D> for PrefixedStore<'a, D> {}
 impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
     pub fn new(prefix: &str, state: &'a mut State<D>) -> Self {
         PrefixedStore {
-            pfx: Prefix::new(prefix.as_bytes()),
-            state,
-        }
-    }
-}
-
-/// Non-merkle prefixed store
-pub struct RocksStore<'a, D: IRocksDB> {
-    pfx: Prefix,
-    state: &'a mut RocksState<D>,
-}
-
-impl<'a, D: IRocksDB> RStated<'a, D> for RocksStore<'a, D> {
-    fn set_state(&mut self, state: &'a mut RocksState<D>) {
-        self.state = state;
-    }
-    fn state(&self) -> &RocksState<D> {
-        &self.state
-    }
-    fn state_mut(&mut self) -> &mut RocksState<D> {
-        self.state
-    }
-    fn prefix(&self) -> Prefix {
-        self.pfx.clone()
-    }
-}
-
-impl<'a, D: IRocksDB> IRocksStore<'a, D> for RocksStore<'a, D> {}
-
-impl<'a, D: IRocksDB> RocksStore<'a, D> {
-    pub fn new(prefix: &str, state: &'a mut RocksState<D>) -> Self {
-        RocksStore {
             pfx: Prefix::new(prefix.as_bytes()),
             state,
         }
@@ -656,7 +622,7 @@ mod tests {
             "findora_db".to_string(),
             VER_WINDOW,
         )));
-        let mut state = State::new(cs.clone());
+        let mut state = State::new(cs);
         let mut store = PrefixedStore::new("testStore", &mut state);
 
         store.set(b"validator_fra2221", b"200".to_vec()).unwrap();
@@ -686,17 +652,17 @@ mod tests {
             store.get(b"validator_fra2224").unwrap(),
             Some(b"700".to_vec())
         );
-        assert_eq!(store.exists(b"validator_fra2224").unwrap(), true);
+        assert!(store.exists(b"validator_fra2224").unwrap());
 
         let _ = store.delete(b"validator_fra2224");
         assert_eq!(store.get(b"validator_fra2224").unwrap(), None);
-        assert_eq!(store.exists(b"validator_fra2224").unwrap(), false);
+        assert!(!store.exists(b"validator_fra2224").unwrap());
 
         let (_, _) = store.state.commit(13).unwrap();
         assert_eq!(
             store.get(b"validator_fra2221").unwrap(),
             Some(b"200".to_vec())
         );
-        assert_eq!(store.exists(b"validator_fra2221").unwrap(), true);
+        assert!(store.exists(b"validator_fra2221").unwrap());
     }
 }

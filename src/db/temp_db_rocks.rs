@@ -1,4 +1,4 @@
-use crate::db::{IRocksDB, KVBatch, RocksDB};
+use crate::db::{DBIter, IterOrder, KVBatch, MerkleDB, RocksDB};
 use ruc::*;
 use std::env::temp_dir;
 use std::ops::{Deref, DerefMut};
@@ -33,17 +33,33 @@ impl TempRocksDB {
     }
 }
 
-impl IRocksDB for TempRocksDB {
+impl MerkleDB for TempRocksDB {
+    fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
+        self.deref_mut().put_batch(kvs)
+    }
+
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.deref().get(key)
     }
 
-    fn iter(&self, lower: &[u8], upper: &[u8], order: super::IterOrder) -> super::merk_db::DBIter {
+    fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.deref().get(key)
+    }
+
+    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
         self.deref().iter(lower, upper, order)
     }
 
-    fn commit(&mut self, kvs: KVBatch) -> Result<()> {
-        self.deref_mut().commit(kvs)
+    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+        self.deref().iter(lower, upper, order)
+    }
+
+    fn commit(&mut self, kvs: KVBatch, flush: bool) -> Result<()> {
+        self.deref_mut().commit(kvs, flush)
+    }
+
+    fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.deref().snapshot(path)
     }
 }
 
@@ -68,8 +84,7 @@ impl Drop for TempRocksDB {
 
 #[cfg(test)]
 mod tests {
-    use super::TempRocksDB;
-    use crate::db::{IRocksDB, IterOrder};
+    use crate::db::{IterOrder, MerkleDB, TempRocksDB};
     use std::thread;
 
     #[test]
@@ -78,10 +93,13 @@ mod tests {
         let mut db = TempRocksDB::open(path).expect("failed to open db");
 
         // commit data
-        db.commit(vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-        ])
+        db.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            true,
+        )
         .unwrap();
 
         // get and compare
@@ -95,14 +113,17 @@ mod tests {
         let mut db = TempRocksDB::open(path).expect("failed to open db");
 
         // commit data
-        db.commit(vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-        ])
+        db.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            true,
+        )
         .unwrap();
 
         // del data at height 101
-        db.commit(vec![(b"k10".to_vec(), None), (b"k20".to_vec(), None)])
+        db.commit(vec![(b"k10".to_vec(), None), (b"k20".to_vec(), None)], true)
             .unwrap();
 
         // get and compare
@@ -116,14 +137,17 @@ mod tests {
         let mut db = TempRocksDB::open(path).expect("failed to open db");
 
         // commit data
-        db.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))])
+        db.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))], true)
             .unwrap();
 
         // update data at height
-        db.commit(vec![
-            (b"k10".to_vec(), Some(b"v12".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-        ])
+        db.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v12".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            true,
+        )
         .unwrap();
 
         // get and compare
@@ -137,17 +161,20 @@ mod tests {
         let mut db = TempRocksDB::open(path).expect("failed to open db");
 
         // commit data
-        db.commit(vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-            (b"k30".to_vec(), Some(b"v30".to_vec())),
-            (b"k40".to_vec(), Some(b"v40".to_vec())),
-            (b"k50".to_vec(), Some(b"v50".to_vec())),
-        ])
+        db.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+                (b"k30".to_vec(), Some(b"v30".to_vec())),
+                (b"k40".to_vec(), Some(b"v40".to_vec())),
+                (b"k50".to_vec(), Some(b"v50".to_vec())),
+            ],
+            true,
+        )
         .unwrap();
 
         // del data at height 101
-        db.commit(vec![(b"k20".to_vec(), None), (b"k40".to_vec(), None)])
+        db.commit(vec![(b"k20".to_vec(), None), (b"k40".to_vec(), None)], true)
             .unwrap();
 
         // iterate data on range ["k10", "k50")
@@ -168,13 +195,16 @@ mod tests {
         let mut db = TempRocksDB::open(path).expect("failed to open db");
 
         // commit data
-        db.commit(vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-            (b"k30".to_vec(), Some(b"v30".to_vec())),
-            (b"k40".to_vec(), Some(b"v40".to_vec())),
-            (b"k50".to_vec(), Some(b"v50".to_vec())),
-        ])
+        db.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+                (b"k30".to_vec(), Some(b"v30".to_vec())),
+                (b"k40".to_vec(), Some(b"v40".to_vec())),
+                (b"k50".to_vec(), Some(b"v50".to_vec())),
+            ],
+            true,
+        )
         .unwrap();
 
         // iterate data on range ["k20", "k50")
@@ -196,13 +226,16 @@ mod tests {
         let mut db = TempRocksDB::open(path).expect("failed to open db");
 
         // commit data
-        db.commit(vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-            (b"k30".to_vec(), Some(b"v30".to_vec())),
-            (b"k40".to_vec(), Some(b"v40".to_vec())),
-            (b"k50".to_vec(), Some(b"v50".to_vec())),
-        ])
+        db.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+                (b"k30".to_vec(), Some(b"v30".to_vec())),
+                (b"k40".to_vec(), Some(b"v40".to_vec())),
+                (b"k50".to_vec(), Some(b"v50".to_vec())),
+            ],
+            true,
+        )
         .unwrap();
 
         // iterate data on range ["k20", "k50")

@@ -3,15 +3,11 @@
 ///
 pub mod cache;
 pub mod chain_state;
-pub mod chain_state_rocks;
-pub mod rocks_state;
 
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
 pub use cache::{KVMap, KVecMap, SessionedCache};
 pub use chain_state::ChainState;
-pub use chain_state_rocks::RocksChainState;
 use parking_lot::RwLock;
-pub use rocks_state::RocksState;
 use ruc::*;
 use std::sync::Arc;
 
@@ -19,13 +15,9 @@ use std::sync::Arc;
 ///
 /// Contains a Reference to the ChainState and a Session Cache used for collecting batch data
 /// and transaction simulation.
-pub struct State<D>
-where
-    D: MerkleDB,
-{
+pub struct State<D: MerkleDB> {
     chain_state: Arc<RwLock<ChainState<D>>>,
     cache: SessionedCache,
-    //TODO: gas_calculator: GasCalculator,
 }
 
 /// Implementation of concrete State struct
@@ -249,15 +241,15 @@ mod tests {
         state.set(b"prefix_delegator_1", b"v20".to_vec()).unwrap();
 
         //Get the values
-        assert_eq!(state.exists(b"prefix_validator_1").unwrap(), true);
-        assert_eq!(state.exists(b"prefix_delegator_1").unwrap(), true);
-        assert_eq!(state.exists(b"prefix_validator_2").unwrap(), false);
+        assert!(state.exists(b"prefix_validator_1").unwrap());
+        assert!(state.exists(b"prefix_delegator_1").unwrap());
+        assert!(!state.exists(b"prefix_validator_2").unwrap());
 
         //Commit and create new state - Simulate new block
         let _res = state.commit(89);
 
         //Should get this value from the chain state as the state cache is empty
-        assert_eq!(state.exists(b"prefix_validator_1").unwrap(), true);
+        assert!(state.exists(b"prefix_validator_1").unwrap());
     }
 
     #[test]

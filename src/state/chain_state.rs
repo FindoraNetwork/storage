@@ -3,12 +3,11 @@
 /// This Structure will be the main interface to the persistence layer provided by MerkleDB
 /// and RocksDB backend.
 ///
-use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
+use crate::db::{IterOrder, KVBatch, KVEntry, KValue, MerkleDB};
 use crate::state::cache::KVMap;
 use crate::store::Prefix;
 use merk::tree::{Tree, NULL_HASH};
 use ruc::*;
-use std::iter::FromIterator;
 use std::path::Path;
 use std::str;
 
@@ -18,20 +17,14 @@ const TOMBSTONE: [u8; 1] = [206u8];
 
 /// Concrete ChainState struct containing a reference to an instance of MerkleDB, a name and
 /// current tree height.
-pub struct ChainState<D>
-where
-    D: MerkleDB,
-{
+pub struct ChainState<D: MerkleDB> {
     name: String,
     ver_window: u64,
     db: D,
 }
 
 /// Implementation of of the concrete ChainState struct
-impl<D> ChainState<D>
-where
-    D: MerkleDB,
-{
+impl<D: MerkleDB> ChainState<D> {
     /// Creates a new instance of the ChainState.
     ///
     /// A default name is used if not provided and a reference to a struct implementing the
@@ -209,8 +202,7 @@ where
     /// prefixed to each key.
     ///
     /// This is to keep a versioned history of KV pairs.
-
-    fn build_aux_batch(&self, height: u64, batch: &KVBatch) -> Result<KVBatch> {
+    fn build_aux_batch(&self, height: u64, batch: &[KVEntry]) -> Result<KVBatch> {
         let mut aux_batch = KVBatch::new();
         if self.ver_window != 0 {
             // Copy keys from batch to aux batch while prefixing them with the current height
@@ -306,7 +298,7 @@ where
             );
 
             // commit this batch
-            let batch = Vec::from_iter(kvs.into_iter());
+            let batch = kvs.into_iter().collect::<Vec<_>>();
             if cs.commit(batch, h, true).is_err() {
                 let msg = format!("Replay failed on height {}", h);
                 return Err(eg!(msg));
@@ -418,7 +410,7 @@ where
                 .collect();
             kvs
         } else {
-            Vec::from_iter(map.into_iter())
+            map.into_iter().collect::<Vec<_>>()
         }
     }
 
@@ -493,57 +485,73 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::db::{FinDB, IterOrder, KVBatch, KValue, MerkleDB, TempFinDB};
+    use crate::db::{FinDB, IterOrder, KVBatch, KValue, MerkleDB, TempFinDB, TempRocksDB};
     use crate::state::{chain_state, ChainState};
     use rand::Rng;
     use std::thread;
 
     const VER_WINDOW: u64 = 100;
 
+    /// create chain state of `FinDB`
+    fn gen_cs(path: String) -> ChainState<TempFinDB> {
+        let fdb = TempFinDB::open(path).expect("failed to open findb");
+        chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW)
+    }
+
+    /// create chain state of `RocksDB`
+    fn gen_cs_rocks(path: String) -> ChainState<TempRocksDB> {
+        let fdb = TempRocksDB::open(path).expect("failed to open rocksdb");
+        chain_state::ChainState::new(fdb, "test_db".to_string(), 0)
+    }
+
     #[test]
     fn test_new_chain_state() {
-        //Create new database
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let _cs = gen_cs(path);
+    }
 
-        //Create new Chain State with new database
-        let _cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+    #[test]
+    fn test_new_chain_state_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let _cs = gen_cs_rocks(path);
+    }
+
+    fn test_get_impl<D: MerkleDB>(mut cs: ChainState<D>) {
+        // commit data
+        cs.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            25,
+            true,
+        )
+        .unwrap();
+
+        // verify
+        assert_eq!(cs.get(&b"k10".to_vec()).unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(cs.get(&b"k20".to_vec()).unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(cs.get(&b"kN/A".to_vec()).unwrap(), None);
+        assert_eq!(cs.height().unwrap(), 25);
     }
 
     #[test]
     fn test_get() {
         let path = thread::current().name().unwrap().to_owned();
-        let mut fdb = TempFinDB::open(path).expect("failed to open db");
+        test_get_impl(gen_cs(path));
+    }
 
-        // put data
-        fdb.put_batch(vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-        ])
-        .unwrap();
-
-        // commit data without flushing to disk
-        fdb.commit(vec![(b"height".to_vec(), Some(b"25".to_vec()))], false)
-            .unwrap();
-
-        //Create new Chain State with new database
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
-
-        assert_eq!(cs.get(&b"k10".to_vec()).unwrap(), Some(b"v10".to_vec()));
-        assert_eq!(cs.get(&b"k20".to_vec()).unwrap(), Some(b"v20".to_vec()));
-        assert_eq!(cs.get(&b"kN/A".to_vec()).unwrap(), None);
-        assert_eq!(
-            cs.get_aux(&b"height".to_vec()).unwrap(),
-            Some(b"25".to_vec())
-        );
+    #[test]
+    fn test_get_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        test_get_impl(gen_cs_rocks(path));
     }
 
     #[test]
     fn test_iterate() {
         let path = thread::current().name().unwrap().to_owned();
-        let mut fdb = TempFinDB::open(path).expect("failed to open db");
+        let mut cs = gen_cs(path);
 
-        let mut index = 0;
         let batch = vec![
             (b"k10".to_vec(), Some(b"v10".to_vec())),
             (b"k20".to_vec(), Some(b"v20".to_vec())),
@@ -554,18 +562,13 @@ mod tests {
             (b"k70".to_vec(), Some(b"v70".to_vec())),
             (b"k80".to_vec(), Some(b"v80".to_vec())),
         ];
-
         let batch_clone = batch.clone();
 
-        // put data
-        fdb.put_batch(batch).unwrap();
-
-        // commit data without flushing to disk
-        fdb.commit(vec![(b"height".to_vec(), Some(b"26".to_vec()))], false)
-            .unwrap();
+        // commit data
+        cs.commit(batch, 26, true).unwrap();
 
         //Create new Chain State with new database
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+        let mut index = 0;
         let mut func_iter = |entry: KValue| {
             println!("Key: {:?}, Value: {:?}", entry.0, entry.1);
             //Assert Keys are equal
@@ -578,18 +581,17 @@ mod tests {
         };
         cs.iterate(
             &b"k10".to_vec(),
-            &b"k80".to_vec(),
+            &b"k81".to_vec(),
             IterOrder::Asc,
             &mut func_iter,
         );
     }
 
     #[test]
-    fn test_aux_iterator() {
+    fn test_iterate_rocks() {
         let path = thread::current().name().unwrap().to_owned();
-        let mut fdb = TempFinDB::open(path).expect("failed to open db");
+        let mut cs = gen_cs_rocks(path);
 
-        let mut index = 0;
         let batch = vec![
             (b"k10".to_vec(), Some(b"v10".to_vec())),
             (b"k20".to_vec(), Some(b"v20".to_vec())),
@@ -600,19 +602,125 @@ mod tests {
             (b"k70".to_vec(), Some(b"v70".to_vec())),
             (b"k80".to_vec(), Some(b"v80".to_vec())),
         ];
-
         let batch_clone = batch.clone();
 
-        // put data
-        fdb.put_batch(vec![]).unwrap();
-
-        // commit data without flushing to disk, the batch is passed to the aux data here
-        fdb.commit(batch, false).unwrap();
+        // commit data
+        cs.commit(batch, 26, true).unwrap();
 
         //Create new Chain State with new database
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+        let mut index = 0;
         let mut func_iter = |entry: KValue| {
             println!("Key: {:?}, Value: {:?}", entry.0, entry.1);
+            //Assert Keys are equal
+            assert_eq!(entry.0, batch_clone[index].0);
+            //Assert Values are equal
+            assert_eq!(entry.1, batch_clone[index].1.clone().unwrap());
+
+            index += 1;
+            false
+        };
+
+        // chain state of RocksDB has to use iterate_aux
+        cs.iterate_aux(
+            &b"k10".to_vec(),
+            &b"k81".to_vec(),
+            IterOrder::Asc,
+            &mut func_iter,
+        );
+    }
+
+    fn test_exists_impl<D: MerkleDB>(mut cs: ChainState<D>) {
+        // commit data
+        cs.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            26,
+            true,
+        )
+        .unwrap();
+
+        // verify
+        assert!(cs.exists(&b"k10".to_vec()).unwrap());
+        assert!(cs.exists(&b"k20".to_vec()).unwrap());
+        assert!(!cs.exists(&b"kN/A".to_vec()).unwrap());
+    }
+
+    #[test]
+    fn test_exists() {
+        let path = thread::current().name().unwrap().to_owned();
+        test_exists_impl(gen_cs(path));
+    }
+
+    #[test]
+    fn test_exists_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        test_exists_impl(gen_cs_rocks(path));
+    }
+
+    #[test]
+    fn test_commit() {
+        let path = thread::current().name().unwrap().to_owned();
+        let mut cs = gen_cs(path);
+
+        let batch = vec![
+            (b"k10".to_vec(), Some(b"v10".to_vec())),
+            (b"k20".to_vec(), Some(b"v20".to_vec())),
+            (b"k30".to_vec(), Some(b"v30".to_vec())),
+            (b"k40".to_vec(), Some(b"v40".to_vec())),
+            (b"k50".to_vec(), Some(b"v50".to_vec())),
+            (b"k60".to_vec(), Some(b"v60".to_vec())),
+            (b"k70".to_vec(), Some(b"v70".to_vec())),
+            (b"k80".to_vec(), Some(b"v80".to_vec())),
+        ];
+        let batch_clone = batch.clone();
+
+        // Commit batch to db, in production the flush would be true
+        let result = cs.commit(batch, 55, false).unwrap();
+        assert_eq!(result.1, 55);
+
+        let mut index = 0;
+        let mut func_iter = |entry: KValue| {
+            //Assert Keys are equal
+            assert_eq!(entry.0, batch_clone[index].0);
+            //Assert Values are equal
+            assert_eq!(entry.1, batch_clone[index].1.clone().unwrap());
+
+            index += 1;
+            false
+        };
+        cs.iterate(
+            &b"k10".to_vec(),
+            &b"k81".to_vec(),
+            IterOrder::Asc,
+            &mut func_iter,
+        );
+    }
+
+    #[test]
+    fn test_commit_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let mut cs = gen_cs_rocks(path);
+
+        let batch = vec![
+            (b"k10".to_vec(), Some(b"v10".to_vec())),
+            (b"k20".to_vec(), Some(b"v20".to_vec())),
+            (b"k30".to_vec(), Some(b"v30".to_vec())),
+            (b"k40".to_vec(), Some(b"v40".to_vec())),
+            (b"k50".to_vec(), Some(b"v50".to_vec())),
+            (b"k60".to_vec(), Some(b"v60".to_vec())),
+            (b"k70".to_vec(), Some(b"v70".to_vec())),
+            (b"k80".to_vec(), Some(b"v80".to_vec())),
+        ];
+        let batch_clone = batch.clone();
+
+        // Commit batch to db, in production the flush would be true
+        let result = cs.commit(batch, 55, false).unwrap();
+        assert_eq!(result.1, 55);
+
+        let mut index = 0;
+        let mut func_iter = |entry: KValue| {
             //Assert Keys are equal
             assert_eq!(entry.0, batch_clone[index].0);
             //Assert Values are equal
@@ -623,73 +731,7 @@ mod tests {
         };
         cs.iterate_aux(
             &b"k10".to_vec(),
-            &b"k80".to_vec(),
-            IterOrder::Asc,
-            &mut func_iter,
-        );
-    }
-
-    #[test]
-    fn test_exists() {
-        let path = thread::current().name().unwrap().to_owned();
-        let mut fdb = TempFinDB::open(path).expect("failed to open db");
-
-        // put data
-        fdb.put_batch(vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-        ])
-        .unwrap();
-
-        // commit data without flushing to disk
-        fdb.commit(vec![(b"height".to_vec(), Some(b"26".to_vec()))], false)
-            .unwrap();
-
-        //Create new Chain State with new database
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
-
-        assert_eq!(cs.exists(&b"k10".to_vec()).unwrap(), true);
-        assert_eq!(cs.exists(&b"k20".to_vec()).unwrap(), true);
-        assert_eq!(cs.exists(&b"kN/A".to_vec()).unwrap(), false);
-    }
-
-    #[test]
-    fn test_commit() {
-        let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-
-        let mut index = 0;
-        let batch = vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-            (b"k30".to_vec(), Some(b"v30".to_vec())),
-            (b"k40".to_vec(), Some(b"v40".to_vec())),
-            (b"k50".to_vec(), Some(b"v50".to_vec())),
-            (b"k60".to_vec(), Some(b"v60".to_vec())),
-            (b"k70".to_vec(), Some(b"v70".to_vec())),
-            (b"k80".to_vec(), Some(b"v80".to_vec())),
-        ];
-        let batch_clone = batch.clone();
-
-        //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
-
-        // Commit batch to db, in production the flush would be true
-        let result = cs.commit(batch, 55, false).unwrap();
-        assert_eq!(result.1, 55);
-
-        let mut func_iter = |entry: KValue| {
-            //Assert Keys are equal
-            assert_eq!(entry.0, batch_clone[index].0);
-            //Assert Values are equal
-            assert_eq!(entry.1, batch_clone[index].1.clone().unwrap());
-
-            index += 1;
-            false
-        };
-        cs.iterate(
-            &b"k10".to_vec(),
-            &b"k80".to_vec(),
+            &b"k81".to_vec(),
             IterOrder::Asc,
             &mut func_iter,
         );
@@ -698,22 +740,21 @@ mod tests {
     #[test]
     fn test_aux_commit() {
         let path = thread::current().name().unwrap().to_owned();
-        let mut fdb = TempFinDB::open(path).expect("failed to open db");
+        let mut cs = gen_cs(path);
 
-        // put data
-        fdb.put_batch(vec![
-            (b"k10".to_vec(), Some(b"v10".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-        ])
+        // commit data
+        cs.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            25,
+            true,
+        )
         .unwrap();
 
-        // commit data without flushing to disk
-        fdb.commit(vec![(b"height".to_vec(), Some(b"25".to_vec()))], false)
-            .unwrap();
-
-        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
-        let height_aux = cs.get_aux(&b"height".to_vec()).unwrap();
-        let height = cs.get(&b"height".to_vec());
+        let height_aux = cs.get_aux(&b"Height".to_vec()).unwrap();
+        let height = cs.get(&b"Height".to_vec());
 
         //Make sure height was saved to auxiliary section of the db.
         assert_eq!(height_aux, Some(b"25".to_vec()));
@@ -723,9 +764,35 @@ mod tests {
     }
 
     #[test]
+    fn test_aux_commit_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let mut cs = gen_cs_rocks(path);
+
+        // commit data
+        cs.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            25,
+            true,
+        )
+        .unwrap();
+
+        let height_aux = cs.get_aux(&b"Height".to_vec()).unwrap();
+        let height = cs.get(&b"Height".to_vec());
+
+        //Make sure the height accessible from the db.
+        assert_eq!(height.unwrap(), Some(b"25".to_vec()));
+
+        //Make sure get() and get_aux do the SAME query.
+        assert_eq!(height_aux, Some(b"25".to_vec()));
+    }
+
+    #[test]
     fn test_root_hash() {
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
+        let mut cs = gen_cs(path);
 
         let batch = vec![
             (b"k10".to_vec(), Some(b"v10".to_vec())),
@@ -734,7 +801,6 @@ mod tests {
         ];
 
         //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
         let (root_hash1, _) = cs.commit(batch, 32, false).unwrap();
 
         let batch2 = vec![
@@ -753,8 +819,7 @@ mod tests {
     #[test]
     fn test_root_hash_same_kvs_diff_commits() {
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path.clone()).expect("failed to open db");
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+        let mut cs = gen_cs(path.clone());
 
         let batch = vec![
             (b"k10".to_vec(), Some(b"v10".to_vec())),
@@ -766,8 +831,7 @@ mod tests {
 
         // another chain state commit same KVs in 2 commits
         let path2 = format!("{}_2", path);
-        let fdb2 = TempFinDB::open(path2).expect("failed to open db");
-        let mut cs2 = chain_state::ChainState::new(fdb2, "test_db".to_string(), VER_WINDOW);
+        let mut cs2 = gen_cs(path2);
 
         let batch2 = vec![(b"k10".to_vec(), Some(b"v11".to_vec()))];
         let batch3 = vec![
@@ -784,20 +848,14 @@ mod tests {
         assert_ne!(root_hash1, root_hash3);
     }
 
-    #[test]
-    fn test_height() {
-        let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-
+    fn test_height_impl<D: MerkleDB>(mut cs: ChainState<D>) {
         let batch = vec![
             (b"k10".to_vec(), Some(b"v10".to_vec())),
             (b"k70".to_vec(), Some(b"v70".to_vec())),
             (b"k80".to_vec(), Some(b"v80".to_vec())),
         ];
 
-        //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
-
+        // verify
         assert_eq!(cs.height().unwrap(), 0u64);
 
         let (_, _) = cs.commit(batch, 32, false).unwrap();
@@ -815,13 +873,25 @@ mod tests {
     }
 
     #[test]
+    fn test_height() {
+        let path = thread::current().name().unwrap().to_owned();
+        test_height_impl(gen_cs(path));
+    }
+
+    #[test]
+    fn test_height_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        test_height_impl(gen_cs_rocks(path));
+    }
+
+    #[test]
     fn test_build_aux_batch() {
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 10);
+
         let number_of_batches = 21;
         let batch_size = 7;
-        //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 10);
 
         //Create Several batches (More than Window size) with different keys and values
         for i in 1..number_of_batches {
@@ -852,10 +922,10 @@ mod tests {
     fn test_prune_aux_batch() {
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 10);
+
         let number_of_batches = 21;
         let batch_size = 7;
-        //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 10);
 
         //Create Several batches (More than Window size) with different keys and values
         for i in 1..number_of_batches {
@@ -965,12 +1035,12 @@ mod tests {
 
     #[test]
     fn test_clean_aux_db() {
+        //Create new Chain State with new database
         let path = thread::current().name().unwrap().to_owned();
         let fdb = FinDB::open(path.clone()).expect("failed to open db");
+        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 10);
         let number_of_batches = 21;
         let batch_size = 7;
-        //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 10);
 
         //Create Several batches (More than Window size) with different keys and values
         for i in 1..number_of_batches {
@@ -989,7 +1059,7 @@ mod tests {
         //Simulate Node restart
         std::mem::drop(cs);
         let new_window_size = 5;
-        let fdb_new = TempFinDB::open(path.clone()).expect("failed to open db");
+        let fdb_new = TempFinDB::open(path).expect("failed to open db");
         let cs_new = chain_state::ChainState::new(fdb_new, "test_db".to_string(), new_window_size);
 
         //Confirm keys older than new window size have been deleted
@@ -1013,10 +1083,9 @@ mod tests {
 
     #[test]
     fn test_get_ver() {
-        let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path.clone()).expect("failed to open db");
         //Create new Chain State with new database
-        let mut cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+        let path = thread::current().name().unwrap().to_owned();
+        let mut cs = gen_cs(path);
 
         //Commit a single key at different heights and values
         for height in 1..21 {
@@ -1106,6 +1175,7 @@ mod tests {
 
     #[test]
     fn test_snapshot() {
+        //Create new Chain State with new database
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path.clone()).expect("failed to open db");
         let mut cs = ChainState::new(fdb, "test_db".to_string(), 5);

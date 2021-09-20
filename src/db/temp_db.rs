@@ -1,4 +1,4 @@
-use crate::db::{FinDB, MerkleDB};
+use crate::db::{DBIter, FinDB, IterOrder, KVBatch, MerkleDB};
 use ruc::*;
 use std::env::temp_dir;
 use std::ops::{Deref, DerefMut};
@@ -46,24 +46,19 @@ impl MerkleDB for TempFinDB {
         self.deref().get_aux(key)
     }
 
-    fn put_batch(&mut self, kvs: super::KVBatch) -> Result<()> {
+    fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
         self.deref_mut().put_batch(kvs)
     }
 
-    fn iter(&self, lower: &[u8], upper: &[u8], order: super::IterOrder) -> super::merk_db::DBIter {
+    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
         self.deref().iter(lower, upper, order)
     }
 
-    fn iter_aux(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: super::IterOrder,
-    ) -> super::merk_db::DBIter {
+    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
         self.deref().iter_aux(lower, upper, order)
     }
 
-    fn commit(&mut self, aux: super::KVBatch, flush: bool) -> Result<()> {
+    fn commit(&mut self, aux: KVBatch, flush: bool) -> Result<()> {
         self.deref_mut().commit(aux, flush)
     }
 
