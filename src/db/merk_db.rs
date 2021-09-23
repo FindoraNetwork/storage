@@ -5,9 +5,7 @@ use std::path::Path;
 
 /// Merkleized KV store interface
 pub trait MerkleDB {
-    fn root_hash(&self) -> Vec<u8> {
-        vec![]
-    }
+    fn root_hash(&self) -> Vec<u8>;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
 

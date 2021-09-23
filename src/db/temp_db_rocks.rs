@@ -34,6 +34,10 @@ impl TempRocksDB {
 }
 
 impl MerkleDB for TempRocksDB {
+    fn root_hash(&self) -> Vec<u8> {
+        self.deref().root_hash()
+    }
+
     fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
         self.deref_mut().put_batch(kvs)
     }

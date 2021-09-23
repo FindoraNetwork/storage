@@ -67,6 +67,11 @@ impl RocksDB {
 }
 
 impl MerkleDB for RocksDB {
+    /// RocksDB always return empty hash
+    fn root_hash(&self) -> Vec<u8> {
+        vec![]
+    }
+
     /// Puts a batch of KVs
     fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
         // update cf in batch
