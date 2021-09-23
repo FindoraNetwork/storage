@@ -1,6 +1,6 @@
 use crate::db::MerkleDB;
 use crate::state::State;
-use crate::store::traits::{Stated, Store};
+pub use traits::{Stated, Store};
 pub use util::Prefix;
 
 pub mod traits;
