@@ -1,4 +1,4 @@
-use merk::{rocksdb, BatchEntry, Merk, Op};
+use fmerk::{rocksdb, BatchEntry, Merk, Op};
 use ruc::*;
 use std::path::Path;
 
