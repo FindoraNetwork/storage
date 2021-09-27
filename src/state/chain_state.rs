@@ -6,7 +6,7 @@
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
 use crate::state::cache::KVMap;
 use crate::store::Prefix;
-use merk::tree::{Tree, NULL_HASH};
+use fmerk::tree::{Tree, NULL_HASH};
 use ruc::*;
 use std::iter::FromIterator;
 use std::path::Path;

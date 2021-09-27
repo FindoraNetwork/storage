@@ -95,7 +95,7 @@ impl Drop for TempFinDB {
 mod tests {
     use super::TempFinDB;
     use crate::db::{IterOrder, MerkleDB};
-    use merk::tree::Tree;
+    use fmerk::tree::Tree;
     use std::thread;
 
     #[test]

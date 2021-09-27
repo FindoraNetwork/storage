@@ -1,4 +1,4 @@
-use merk::Op;
+use fmerk::Op;
 use ruc::*;
 use std::path::{Path, PathBuf};
 
