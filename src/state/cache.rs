@@ -225,9 +225,7 @@ impl KVChecker for MerkChecker {
 
         // check value
         if value.len() > MAX_MERK_VAL_LEN as usize {
-            let val_str =
-                String::from_utf8(value.to_vec()).map_or("non-utf8-value".to_owned(), |v| v);
-            println!("Invalid value length: {}", val_str);
+            println!("Invalid value length: {}", value.len());
             return false;
         }
         true
