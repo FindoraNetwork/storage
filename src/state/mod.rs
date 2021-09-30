@@ -3,15 +3,11 @@
 ///
 pub mod cache;
 pub mod chain_state;
-pub mod chain_state_rocks;
-pub mod rocks_state;
 
 use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
 pub use cache::{KVMap, KVecMap, SessionedCache};
 pub use chain_state::ChainState;
-pub use chain_state_rocks::RocksChainState;
 use parking_lot::RwLock;
-pub use rocks_state::RocksState;
 use ruc::*;
 use std::sync::Arc;
 
@@ -19,13 +15,9 @@ use std::sync::Arc;
 ///
 /// Contains a Reference to the ChainState and a Session Cache used for collecting batch data
 /// and transaction simulation.
-pub struct State<D>
-where
-    D: MerkleDB,
-{
+pub struct State<D: MerkleDB> {
     chain_state: Arc<RwLock<ChainState<D>>>,
     cache: SessionedCache,
-    //TODO: gas_calculator: GasCalculator,
 }
 
 /// Implementation of concrete State struct
@@ -190,20 +182,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{KValue, TempFinDB};
+    use crate::db::{KValue, TempFinDB, TempRocksDB};
     use std::thread;
     const VER_WINDOW: u64 = 100;
 
-    #[test]
-    fn test_get() {
+    /// create chain state of `FinDB`
+    fn gen_cs(path: String) -> Arc<RwLock<ChainState<TempFinDB>>> {
+        let fdb = TempFinDB::open(path).expect("failed to open findb");
+        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+        Arc::new(RwLock::new(cs))
+    }
+
+    /// create chain state of `RocksDB`
+    fn gen_cs_rocks(path: String) -> Arc<RwLock<ChainState<TempRocksDB>>> {
+        let fdb = TempRocksDB::open(path).expect("failed to open rocksdb");
+        let cs = chain_state::ChainState::new(fdb, "test_db".to_string(), 0);
+        Arc::new(RwLock::new(cs))
+    }
+
+    fn test_get_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         //Setup
-        let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
-            fdb,
-            "test_db".to_string(),
-            VER_WINDOW,
-        )));
         let mut state = State::new(cs.clone());
 
         //Set some kv pairs
@@ -233,15 +231,21 @@ mod tests {
     }
 
     #[test]
-    fn test_exists() {
-        //Setup
+    fn test_get() {
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
-            fdb,
-            "test_db".to_string(),
-            VER_WINDOW,
-        )));
+        let cs = gen_cs(path);
+        test_get_impl(cs);
+    }
+
+    #[test]
+    fn test_get_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+        test_get_impl(cs);
+    }
+
+    fn test_exists_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
+        //Setup
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -249,27 +253,33 @@ mod tests {
         state.set(b"prefix_delegator_1", b"v20".to_vec()).unwrap();
 
         //Get the values
-        assert_eq!(state.exists(b"prefix_validator_1").unwrap(), true);
-        assert_eq!(state.exists(b"prefix_delegator_1").unwrap(), true);
-        assert_eq!(state.exists(b"prefix_validator_2").unwrap(), false);
+        assert!(state.exists(b"prefix_validator_1").unwrap());
+        assert!(state.exists(b"prefix_delegator_1").unwrap());
+        assert!(!state.exists(b"prefix_validator_2").unwrap());
 
         //Commit and create new state - Simulate new block
         let _res = state.commit(89);
 
         //Should get this value from the chain state as the state cache is empty
-        assert_eq!(state.exists(b"prefix_validator_1").unwrap(), true);
+        assert!(state.exists(b"prefix_validator_1").unwrap());
     }
 
     #[test]
-    fn test_set() {
-        //Setup
+    fn test_exists() {
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
-            fdb,
-            "test_db".to_string(),
-            VER_WINDOW,
-        )));
+        let cs = gen_cs(path);
+        test_exists_impl(cs);
+    }
+
+    #[test]
+    fn test_exists_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+        test_exists_impl(cs);
+    }
+
+    fn test_set_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
+        //Setup
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -286,6 +296,20 @@ mod tests {
             Some(b"v20".to_vec())
         );
         assert_eq!(state.get(b"prefix_validator_2").unwrap(), None);
+    }
+
+    #[test]
+    fn test_set() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs(path);
+        test_set_impl(cs);
+    }
+
+    #[test]
+    fn test_set_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+        test_set_impl(cs);
     }
 
     #[test]
@@ -363,16 +387,8 @@ mod tests {
         state.commit(1).unwrap();
     }
 
-    #[test]
-    fn test_delete() {
+    fn test_delete_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         //Setup
-        let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
-            fdb,
-            "test_db".to_string(),
-            VER_WINDOW,
-        )));
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -430,15 +446,20 @@ mod tests {
     }
 
     #[test]
-    fn test_get_deleted() {
-        //Setup
+    fn test_delete() {
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
-            fdb,
-            "test_db".to_string(),
-            VER_WINDOW,
-        )));
+        let cs = gen_cs(path);
+        test_delete_impl(cs);
+    }
+
+    #[test]
+    fn test_delete_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+        test_delete_impl(cs);
+    }
+
+    fn test_get_deleted_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -454,15 +475,24 @@ mod tests {
     }
 
     #[test]
+    fn test_get_deleted() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs(path);
+        test_get_deleted_impl(cs);
+    }
+
+    #[test]
+    fn test_get_deleted_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+        test_get_deleted_impl(cs);
+    }
+
+    #[test]
     fn test_commit() {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
-            fdb,
-            "test_db".to_string(),
-            VER_WINDOW,
-        )));
+        let cs = gen_cs(path);
         let mut state = State::new(cs);
 
         //Set some kv pairs
@@ -481,6 +511,39 @@ mod tests {
 
         //Root hashes must be different
         assert_ne!(app_hash1, app_hash2);
+        assert_eq!(height2, 91);
+
+        //Commit state to db
+        let (app_hash3, height3) = state.commit(92).unwrap();
+
+        // Root hashes must be equal
+        assert_eq!(app_hash2, app_hash3);
+        assert_eq!(height3, 92)
+    }
+
+    #[test]
+    fn test_commit_rocks() {
+        //Setup
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+        let mut state = State::new(cs);
+
+        //Set some kv pairs
+        state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
+        state.set(b"prefix_validator_2", b"v10".to_vec()).unwrap();
+
+        //Commit state to db
+        let (app_hash1, height1) = state.commit(90).unwrap();
+
+        //Modify a value in the db
+        state.set(b"prefix_validator_2", b"v20".to_vec()).unwrap();
+        assert_eq!(height1, 90);
+
+        //Commit state to db
+        let (app_hash2, height2) = state.commit(91).unwrap();
+
+        //Root hashes must be different
+        assert_eq!(app_hash1, app_hash2);
         assert_eq!(height2, 91);
 
         //Commit state to db
@@ -526,17 +589,8 @@ mod tests {
         assert_eq!(app_hash2, app_hash3);
     }
 
-    #[test]
-    fn test_iterate() {
-        let path = thread::current().name().unwrap().to_owned();
-        let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(
-            fdb,
-            "test_db".to_string(),
-            VER_WINDOW,
-        )));
+    fn test_iterate_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         let mut state = State::new(cs);
-
         let mut count = 0;
 
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -564,5 +618,19 @@ mod tests {
             &mut func_iter,
         );
         assert_eq!(count, 5);
+    }
+
+    #[test]
+    fn test_iterate() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs(path);
+        test_iterate_impl(cs);
+    }
+
+    #[test]
+    fn test_iterate_rocks() {
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+        test_iterate_impl(cs);
     }
 }

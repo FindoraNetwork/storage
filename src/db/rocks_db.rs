@@ -2,22 +2,9 @@ use fmerk::Op;
 use ruc::*;
 use std::path::{Path, PathBuf};
 
-use crate::db::merk_db::{to_batch, DBIter};
-use crate::db::{IterOrder, KVBatch};
+use crate::db::{rocksdb, to_batch, DBIter, IterOrder, KVBatch, KValue, MerkleDB};
 
 const CF_STATE: &str = "state";
-
-/// RocksDB KV store interface
-pub trait IRocksDB {
-    /// Gets a value for the given key.
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
-
-    /// Gets range iterator
-    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter;
-
-    /// Commits changes.
-    fn commit(&mut self, kvs: KVBatch) -> Result<()>;
-}
 
 /// Rocks db
 pub struct RocksDB {
@@ -74,34 +61,19 @@ impl RocksDB {
         mode: rocksdb::IteratorMode,
         readopts: rocksdb::ReadOptions,
     ) -> rocksdb::DBIterator {
-        let aux_cf = self.db.cf_handle(CF_STATE).unwrap();
-        self.db.iterator_cf_opt(aux_cf, readopts, mode)
+        let state_cf = self.db.cf_handle(CF_STATE).unwrap();
+        self.db.iterator_cf_opt(state_cf, readopts, mode)
     }
 }
 
-impl IRocksDB for RocksDB {
-    /// Gets a value for the given key. If the key is not found, `None` is returned.
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if let Some(cf) = self.db.cf_handle(CF_STATE) {
-            Ok(self.db.get_cf(cf, key).c(d!("get data failed"))?)
-        } else {
-            Ok(None)
-        }
+impl MerkleDB for RocksDB {
+    /// RocksDB always return empty hash
+    fn root_hash(&self) -> Vec<u8> {
+        vec![]
     }
 
-    /// Gets range iterator
-    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
-        let mut readopts = rocksdb::ReadOptions::default();
-        readopts.set_iterate_lower_bound(lower.to_vec());
-        readopts.set_iterate_upper_bound(upper.to_vec());
-        match order {
-            IterOrder::Asc => self.iter_opt(rocksdb::IteratorMode::Start, readopts),
-            IterOrder::Desc => self.iter_opt(rocksdb::IteratorMode::End, readopts),
-        }
-    }
-
-    /// Commits changes.
-    fn commit(&mut self, kvs: KVBatch) -> Result<()> {
+    /// Puts a batch of KVs
+    fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
         // update cf in batch
         let batch_kvs = to_batch(kvs);
         let state_cf = self.db.cf_handle(CF_STATE).unwrap();
@@ -118,11 +90,64 @@ impl IRocksDB for RocksDB {
         opts.set_sync(false);
         self.db.write_opt(batch, &opts).c(d!())?;
 
+        Ok(())
+    }
+
+    /// Gets a value for the given key. If the key is not found, `None` is returned.
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        if let Some(cf) = self.db.cf_handle(CF_STATE) {
+            Ok(self.db.get_cf(cf, key).c(d!("get data failed"))?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Gets an auxiliary value.
+    fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.get(key)
+    }
+
+    /// Gets range iterator
+    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+        let mut readopts = rocksdb::ReadOptions::default();
+        readopts.set_iterate_lower_bound(lower.to_vec());
+        readopts.set_iterate_upper_bound(upper.to_vec());
+        match order {
+            IterOrder::Asc => self.iter_opt(rocksdb::IteratorMode::Start, readopts),
+            IterOrder::Desc => self.iter_opt(rocksdb::IteratorMode::End, readopts),
+        }
+    }
+
+    /// Gets range iterator for aux
+    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+        self.iter(lower, upper, order)
+    }
+
+    /// Commits changes.
+    fn commit(&mut self, kvs: KVBatch, flush: bool) -> Result<()> {
+        // write batch
+        self.put_batch(kvs).c(d!())?;
+
         // flush
-        self.db
-            .flush()
-            .map_err(|_| eg!("Failed to flush memtables"))?;
+        if flush {
+            self.db
+                .flush()
+                .map_err(|_| eg!("Failed to flush memtables"))?;
+        }
 
         Ok(())
+    }
+
+    /// Takes a snapshot using checkpoint
+    fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let cp = rocksdb::checkpoint::Checkpoint::new(&self.db).c(d!())?;
+        cp.create_checkpoint(&path)
+            .c(d!("Failed to take snapshot"))?;
+        Ok(())
+    }
+
+    /// Decode key value pair
+    fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
+        (kv_pair.0.to_vec(), kv_pair.1.to_vec())
     }
 }

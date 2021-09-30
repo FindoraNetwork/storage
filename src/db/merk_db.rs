@@ -1,19 +1,7 @@
-use fmerk::{rocksdb, BatchEntry, Merk, Op};
+use crate::db::{to_batch, DBIter, IterOrder, KVBatch, KValue};
+use fmerk::{rocksdb, tree::Tree, Merk};
 use ruc::*;
 use std::path::Path;
-
-/// key-value pairs
-pub type StoreKey = Vec<u8>;
-pub type KValue = (StoreKey, Vec<u8>);
-pub type KVEntry = (StoreKey, Option<Vec<u8>>);
-pub type KVBatch = Vec<KVEntry>;
-
-/// iterator
-pub type DBIter<'a> = rocksdb::DBIterator<'a>;
-pub enum IterOrder {
-    Asc,
-    Desc,
-}
 
 /// Merkleized KV store interface
 pub trait MerkleDB {
@@ -29,9 +17,11 @@ pub trait MerkleDB {
 
     fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter;
 
-    fn commit(&mut self, aux: KVBatch, flush: bool) -> Result<()>;
+    fn commit(&mut self, kvs: KVBatch, flush: bool) -> Result<()>;
 
     fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()>;
+
+    fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue;
 
     fn as_mut(&mut self) -> &mut Self {
         self
@@ -83,7 +73,7 @@ impl MerkleDB for FinDB {
             .map_err(|_| eg!("Failed to get aux from db"))
     }
 
-    /// Puts a batch of KVs and aux
+    /// Puts a batch of KVs
     fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
         let batch = to_batch(kvs);
         self.db
@@ -127,23 +117,17 @@ impl MerkleDB for FinDB {
         Ok(())
     }
 
-    /// Takes a snapshot with checkpoint
+    /// Takes a snapshot using checkpoint
     fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.db
             .snapshot(path)
             .map_err(|_| eg!("Failed to take snapshot"))?;
         Ok(())
     }
-}
 
-/// Converts KVEntry to BatchEntry
-pub fn to_batch<I: IntoIterator<Item = KVEntry>>(items: I) -> Vec<BatchEntry> {
-    let mut batch = Vec::new();
-    for (key, val) in items {
-        match val {
-            Some(val) => batch.push((key, Op::Put(val))),
-            None => batch.push((key, Op::Delete)),
-        }
+    /// Decode key value pair
+    fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
+        let kv = Tree::decode(kv_pair.0.to_vec(), &kv_pair.1);
+        (kv.key().to_vec(), kv.value().to_vec())
     }
-    batch
 }
