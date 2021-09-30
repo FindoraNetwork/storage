@@ -77,6 +77,11 @@ where
         self.state().get(key)
     }
 
+    /// get value by version.
+    fn get_v(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        self.state().get_ver(key, height)
+    }
+
     /// iterate db only
     fn iter_db(&self, prefix: Prefix, asc: bool, func: &mut dyn FnMut(KValue) -> bool) -> bool {
         let mut iter_order = IterOrder::Desc;
@@ -138,13 +143,12 @@ where
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(obj).c(d!())?;
-        self.set(key.as_ref(), value);
-        Ok(())
+        self.set(key.as_ref(), value)
     }
 
     /// put/update KV
-    fn set(&mut self, key: &[u8], value: Vec<u8>) {
-        self.state_mut().set(key, value);
+    fn set(&mut self, key: &[u8], value: Vec<u8>) -> Result<()> {
+        self.state_mut().set(key, value)
     }
 
     /// delete KV. Nothing happens if key not found
@@ -193,6 +197,11 @@ pub trait StatelessStore {
     /// get value. Returns None if deleted
     fn get<T: MerkleDB>(state: &State<T>, key: &[u8]) -> Result<Option<Vec<u8>>> {
         state.get(key)
+    }
+
+    /// get value by version.
+    fn get_v<T: MerkleDB>(state: &State<T>, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        state.get_ver(key, height)
     }
 
     /// iterate db only
@@ -256,13 +265,12 @@ pub trait StatelessStore {
         D: MerkleDB,
     {
         let value = serde_json::to_vec(obj).c(d!())?;
-        state.set(key.as_ref(), value);
-        Ok(())
+        state.set(key.as_ref(), value)
     }
 
     /// put/update KV
-    fn set<D: MerkleDB>(state: &mut State<D>, key: &[u8], value: Vec<u8>) {
-        state.set(key, value);
+    fn set<D: MerkleDB>(state: &mut State<D>, key: &[u8], value: Vec<u8>) -> Result<()> {
+        state.set(key, value)
     }
 
     /// delete KV. Nothing happens if key not found

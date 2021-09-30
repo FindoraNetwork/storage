@@ -1,11 +1,12 @@
 use crate::db::MerkleDB;
 use crate::state::State;
-use crate::store::traits::{Stated, Store};
+pub use traits::{Stated, Store};
 pub use util::Prefix;
 
 pub mod traits;
 mod util;
 
+/// Merkle-based prefixed store
 pub struct PrefixedStore<'a, D: MerkleDB> {
     pfx: Prefix,
     state: &'a mut State<D>,
@@ -50,6 +51,8 @@ mod tests {
     use ruc::*;
     use std::sync::Arc;
     use std::{thread, time};
+
+    const VER_WINDOW: u64 = 100;
 
     // a example store
     struct StakeStore<'a, D: MerkleDB> {
@@ -170,14 +173,18 @@ mod tests {
         // create store
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "test_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs);
         let mut store = PrefixedStore::new("my_store", &mut state);
         let hash0 = store.state().root_hash();
 
         // set kv pairs and commit
-        store.set(b"k10", b"v10".to_vec());
-        store.set(b"k20", b"v20".to_vec());
+        store.set(b"k10", b"v10".to_vec()).unwrap();
+        store.set(b"k20", b"v20".to_vec()).unwrap();
         let (hash1, _height) = store.state_mut().commit(1).unwrap();
 
         // verify
@@ -186,9 +193,9 @@ mod tests {
         assert_ne!(hash0, hash1);
 
         // add, del and update
-        store.set(b"k10", b"v15".to_vec());
+        store.set(b"k10", b"v15".to_vec()).unwrap();
         store.delete(b"k20").unwrap();
-        store.set(b"k30", b"v30".to_vec());
+        store.set(b"k30", b"v30".to_vec()).unwrap();
 
         // verify
         assert_eq!(store.get(b"k10").unwrap(), Some(b"v15".to_vec()));
@@ -207,7 +214,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -248,7 +259,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -278,7 +293,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -319,7 +338,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -383,7 +406,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut check = State::new(cs);
         let mut store = StakeStore::new("stake", &mut check);
 
@@ -424,7 +451,11 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
         let mut state = State::new(cs.clone());
         let mut store = StakeStore::new("stake", &mut state);
 
@@ -586,13 +617,17 @@ mod tests {
         // create State
         let path = thread::current().name().unwrap().to_owned();
         let fdb = TempFinDB::open(path).expect("failed to open db");
-        let cs = Arc::new(RwLock::new(ChainState::new(fdb, "findora_db".to_string())));
-        let mut state = State::new(cs.clone());
+        let cs = Arc::new(RwLock::new(ChainState::new(
+            fdb,
+            "findora_db".to_string(),
+            VER_WINDOW,
+        )));
+        let mut state = State::new(cs);
         let mut store = PrefixedStore::new("testStore", &mut state);
 
-        store.set(b"validator_fra2221", b"200".to_vec());
-        store.set(b"validator_fra2222", b"300".to_vec());
-        store.set(b"validator_fra2223", b"500".to_vec());
+        store.set(b"validator_fra2221", b"200".to_vec()).unwrap();
+        store.set(b"validator_fra2222", b"300".to_vec()).unwrap();
+        store.set(b"validator_fra2223", b"500".to_vec()).unwrap();
 
         assert_eq!(
             store.get(b"validator_fra2221").unwrap(),
@@ -606,7 +641,7 @@ mod tests {
             Some(b"300".to_vec())
         );
 
-        store.set(b"validator_fra2224", b"700".to_vec());
+        store.set(b"validator_fra2224", b"700".to_vec()).unwrap();
         let prefix = Prefix::new(b"validator");
 
         let res_iter = store.iter_cur(prefix);
@@ -617,17 +652,17 @@ mod tests {
             store.get(b"validator_fra2224").unwrap(),
             Some(b"700".to_vec())
         );
-        assert_eq!(store.exists(b"validator_fra2224").unwrap(), true);
+        assert!(store.exists(b"validator_fra2224").unwrap());
 
         let _ = store.delete(b"validator_fra2224");
         assert_eq!(store.get(b"validator_fra2224").unwrap(), None);
-        assert_eq!(store.exists(b"validator_fra2224").unwrap(), false);
+        assert!(!store.exists(b"validator_fra2224").unwrap());
 
         let (_, _) = store.state.commit(13).unwrap();
         assert_eq!(
             store.get(b"validator_fra2221").unwrap(),
             Some(b"200".to_vec())
         );
-        assert_eq!(store.exists(b"validator_fra2221").unwrap(), true);
+        assert!(store.exists(b"validator_fra2221").unwrap());
     }
 }
