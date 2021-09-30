@@ -404,6 +404,29 @@ mod tests {
         state.commit(1).unwrap();
     }
 
+    #[test]
+     fn test_rocksdb_set_big_key_unchecked() {
+        // Setup
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+
+        // Make sure is_merkle flag is false
+        let mut state = State::new(cs, false);
+
+        // Set maximum valid key and value
+        let max_key = "k".repeat(u8::MAX as usize).as_bytes().to_vec();
+        let max_val = "v".repeat(u16::MAX as usize).as_bytes().to_vec();
+        state.set(&max_key, max_val.clone()).unwrap();
+        assert_eq!(state.get(&max_key).unwrap(), Some(max_val));
+
+        // Set a big key
+        let big_key = "k".repeat(u8::MAX as usize + 1).as_bytes().to_vec();
+        assert!(state.set(&big_key, b"v10".to_vec()).is_ok());
+
+        // Panic on commit
+        state.commit(1).unwrap();
+    }
+
     fn test_delete_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         //Setup
         let mut state = State::new(cs, true);
