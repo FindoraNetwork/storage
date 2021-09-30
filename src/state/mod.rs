@@ -26,11 +26,11 @@ where
     D: MerkleDB,
 {
     /// Creates a State with a new cache and reference to the ChainState
-    pub fn new(cs: Arc<RwLock<ChainState<D>>>) -> Self {
+    pub fn new(cs: Arc<RwLock<ChainState<D>>>, is_merkle: bool) -> Self {
         State {
             // lock whole State object for now
             chain_state: cs,
-            cache: SessionedCache::new(),
+            cache: SessionedCache::new(is_merkle),
         }
     }
 
@@ -132,7 +132,7 @@ where
         //Get batch for current block
         let kv_batch = self.cache.commit();
         //Clear the cache from the current state
-        self.cache = SessionedCache::new();
+        self.cache = SessionedCache::new(self.cache.is_merkle());
 
         //Commit batch to db
         cs.commit(kv_batch, height, true)
@@ -202,7 +202,7 @@ mod tests {
 
     fn test_get_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         //Setup
-        let mut state = State::new(cs.clone());
+        let mut state = State::new(cs.clone(), true);
 
         //Set some kv pairs
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -221,7 +221,7 @@ mod tests {
 
         //Commit and create new state - Simulate new block
         let _res = state.commit(89);
-        state = State::new(cs);
+        state = State::new(cs, true);
 
         //Should get this value from the chain state as the state cache is empty
         assert_eq!(
@@ -246,7 +246,7 @@ mod tests {
 
     fn test_exists_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         //Setup
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         //Set some kv pairs
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -280,7 +280,7 @@ mod tests {
 
     fn test_set_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         //Setup
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         //Set some kv pairs
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -322,7 +322,7 @@ mod tests {
             "test_db".to_string(),
             VER_WINDOW,
         )));
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         // Set maximum valid key and value
         let max_key = "k".repeat(u8::MAX as usize).as_bytes().to_vec();
@@ -350,7 +350,7 @@ mod tests {
             "test_db".to_string(),
             VER_WINDOW,
         )));
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         // Set maximum valid key and value
         let max_key = "k".repeat(u8::MAX as usize).as_bytes().to_vec();
@@ -377,7 +377,7 @@ mod tests {
             "test_db".to_string(),
             VER_WINDOW,
         )));
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         // Set a big value
         let big_val = "v".repeat(u16::MAX as usize + 1).as_bytes().to_vec();
@@ -387,9 +387,26 @@ mod tests {
         state.commit(1).unwrap();
     }
 
+    #[test]
+    fn test_rocksdb_set_big_value_unchecked() {
+        // Setup
+        let path = thread::current().name().unwrap().to_owned();
+        let cs = gen_cs_rocks(path);
+
+        // Make sure is_merkle flag is false
+        let mut state = State::new(cs, false);
+
+        // Set a big value
+        let big_val = "v".repeat(u16::MAX as usize + 1).as_bytes().to_vec();
+        assert!(state.set(b"key10", big_val).is_ok());
+
+        // commit
+        state.commit(1).unwrap();
+    }
+
     fn test_delete_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
         //Setup
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         //Set some kv pairs
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -460,7 +477,7 @@ mod tests {
     }
 
     fn test_get_deleted_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         //Set some kv pairs
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -493,7 +510,7 @@ mod tests {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let cs = gen_cs(path);
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         //Set some kv pairs
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -526,7 +543,7 @@ mod tests {
         //Setup
         let path = thread::current().name().unwrap().to_owned();
         let cs = gen_cs_rocks(path);
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         //Set some kv pairs
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -564,7 +581,7 @@ mod tests {
             "test_db".to_string(),
             VER_WINDOW,
         )));
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
 
         //Set some kv pairs
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();
@@ -590,7 +607,7 @@ mod tests {
     }
 
     fn test_iterate_impl<D: MerkleDB>(cs: Arc<RwLock<ChainState<D>>>) {
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
         let mut count = 0;
 
         state.set(b"prefix_validator_1", b"v10".to_vec()).unwrap();

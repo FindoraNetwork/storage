@@ -26,20 +26,22 @@ impl<'a> Iterator for CacheIter<'a> {
 pub struct SessionedCache {
     cur: KVMap,
     base: KVMap,
+    is_merkle: bool,
 }
 
 #[allow(clippy::new_without_default)]
 impl SessionedCache {
-    pub fn new() -> Self {
+    pub fn new(is_merkle: bool) -> Self {
         SessionedCache {
             cur: KVMap::new(),
             base: KVMap::new(),
+            is_merkle,
         }
     }
 
     /// put/update value by key
     pub fn put(&mut self, key: &[u8], value: Vec<u8>) -> bool {
-        if MerkChecker::check_kv(key, &value) {
+        if Self::check_kv(key, &value, self.is_merkle) {
             self.cur.insert(key.to_owned(), Some(value));
             return true;
         }
@@ -83,6 +85,11 @@ impl SessionedCache {
     /// use case: when KV is not allowed to updated twice
     pub fn touched(&self, key: &[u8]) -> bool {
         self.cur.contains_key(key)
+    }
+
+    /// Returns whether the cache is used for MerkDB or RocksDB
+    pub fn is_merkle(&self) -> bool {
+        self.is_merkle
     }
 
     /// KV deleted or not
@@ -184,6 +191,16 @@ impl SessionedCache {
     fn rebase(&mut self) {
         self.base = self.cur.clone();
     }
+
+    /// checks key value ranges
+    ///
+    /// if this cache is built on a MerkDB then ranges are enforced otherwise ranges are ignored.
+    fn check_kv(key: &[u8], value: &[u8], is_merkle: bool) -> bool {
+        if is_merkle {
+            return MerkChecker::check_kv(key, value);
+        }
+        NoneChecker::check_kv(key, value)
+    }
 }
 
 /// KV checker
@@ -224,7 +241,7 @@ mod tests {
 
     #[test]
     fn cache_put_n_get() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data
         cache.put(b"k10", b"v10".to_vec());
@@ -256,7 +273,7 @@ mod tests {
 
     #[test]
     fn cache_put_n_update() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data
         cache.put(b"k10", b"v10".to_vec());
@@ -292,7 +309,7 @@ mod tests {
 
     #[test]
     fn cache_put_n_delete() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data
         cache.put(b"k10", b"v10".to_vec());
@@ -328,7 +345,7 @@ mod tests {
 
     #[test]
     fn cache_put_n_commit() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data and commit
         cache.put(b"k10", b"v10".to_vec());
@@ -361,7 +378,7 @@ mod tests {
 
     #[test]
     fn cache_commit_n_put_delete_again() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data and commit
         cache.put(b"k10", b"v10".to_vec());
@@ -419,7 +436,7 @@ mod tests {
 
     #[test]
     fn cache_commit_n_put_delete_n_discard() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data and commit
         cache.put(b"k10", b"v10".to_vec());
@@ -471,7 +488,7 @@ mod tests {
 
     #[test]
     fn cache_put_n_iterate() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data in random order
         cache.put(b"k10", b"v10".to_vec());
@@ -492,7 +509,7 @@ mod tests {
 
     #[test]
     fn cache_put_delete_n_iterate() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data in random order
         cache.put(b"k10", b"v10".to_vec());
@@ -520,7 +537,7 @@ mod tests {
 
     #[test]
     fn cache_commit_n_put_delete_discard_n_iterate() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         // put data in random order and delete one
         cache.put(b"k10", b"v10".to_vec());
@@ -564,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
 
         //Put some date into cache
         cache.put(b"k40", b"v40".to_vec());
@@ -592,7 +609,7 @@ mod tests {
 
     #[test]
     fn test_iterate_prefix() {
-        let mut cache = SessionedCache::new();
+        let mut cache = SessionedCache::new(true);
         let mut my_cache = KVecMap::new();
 
         //Put some date into cache
