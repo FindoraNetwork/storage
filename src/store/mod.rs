@@ -178,7 +178,7 @@ mod tests {
             "test_db".to_string(),
             VER_WINDOW,
         )));
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
         let mut store = PrefixedStore::new("my_store", &mut state);
         let hash0 = store.state().root_hash();
 
@@ -219,7 +219,7 @@ mod tests {
             "findora_db".to_string(),
             VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = State::new(cs, true);
         let mut store = StakeStore::new("stake", &mut check);
 
         // default stake MUST be zero
@@ -264,7 +264,7 @@ mod tests {
             "findora_db".to_string(),
             VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = State::new(cs, true);
         let mut store = StakeStore::new("stake", &mut check);
 
         // stake some coins
@@ -298,7 +298,7 @@ mod tests {
             "findora_db".to_string(),
             VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = State::new(cs, true);
         let mut store = StakeStore::new("stake", &mut check);
 
         // stake some coins at height 1
@@ -343,7 +343,7 @@ mod tests {
             "findora_db".to_string(),
             VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = State::new(cs, true);
         let mut store = StakeStore::new("stake", &mut check);
 
         // stake some coins
@@ -411,7 +411,7 @@ mod tests {
             "findora_db".to_string(),
             VER_WINDOW,
         )));
-        let mut check = State::new(cs);
+        let mut check = State::new(cs, true);
         let mut store = StakeStore::new("stake", &mut check);
 
         // stake some coins and commit block 1
@@ -456,7 +456,7 @@ mod tests {
             "findora_db".to_string(),
             VER_WINDOW,
         )));
-        let mut state = State::new(cs.clone());
+        let mut state = State::new(cs.clone(), true);
         let mut store = StakeStore::new("stake", &mut state);
 
         // stake initial coins and commit
@@ -482,7 +482,7 @@ mod tests {
         let cs_1 = cs.clone();
         threads.push(thread::spawn(move || {
             // create store
-            let mut query = State::new(cs_1.clone());
+            let mut query = State::new(cs_1.clone(), true);
             let store = StakeStore::new("stake", &mut query);
 
             // starts
@@ -507,7 +507,7 @@ mod tests {
         let cs_2 = cs.clone();
         threads.push(thread::spawn(move || {
             // create store
-            let mut query = State::new(cs_2.clone());
+            let mut query = State::new(cs_2.clone(), true);
             let store = StakeStore::new("stake", &mut query);
 
             let mut reads = 0;
@@ -535,7 +535,7 @@ mod tests {
         let cs_3 = cs.clone();
         threads.push(thread::spawn(move || {
             // create store
-            let mut check = State::new(cs_3.clone());
+            let mut check = State::new(cs_3.clone(), true);
             let store = StakeStore::new("stake", &mut check);
 
             let mut reads = 0;
@@ -563,7 +563,7 @@ mod tests {
         let cs_4 = cs;
         threads.push(thread::spawn(move || {
             // create store
-            let mut deliver = State::new(cs_4.clone());
+            let mut deliver = State::new(cs_4.clone(), true);
             let mut store = StakeStore::new("stake", &mut deliver);
 
             // starts
@@ -622,7 +622,7 @@ mod tests {
             "findora_db".to_string(),
             VER_WINDOW,
         )));
-        let mut state = State::new(cs);
+        let mut state = State::new(cs, true);
         let mut store = PrefixedStore::new("testStore", &mut state);
 
         store.set(b"validator_fra2221", b"200".to_vec()).unwrap();
