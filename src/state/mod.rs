@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-     fn test_rocksdb_set_big_key_unchecked() {
+    fn test_rocksdb_set_big_key_unchecked() {
         // Setup
         let path = thread::current().name().unwrap().to_owned();
         let cs = gen_cs_rocks(path);
