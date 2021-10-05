@@ -8,6 +8,7 @@ use crate::state::cache::KVMap;
 use crate::store::Prefix;
 use fmerk::tree::NULL_HASH;
 use ruc::*;
+use std::ops::Range;
 use std::path::Path;
 use std::str;
 
@@ -415,14 +416,19 @@ impl<D: MerkleDB> ChainState<D> {
     /// Returns the value of the given key at a particular height
     /// Returns None if the key was deleted or invalid at height H
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
-        //Need to set lower bound as the height can get very large
+        //Need to set lower and upper bound as the height can get very large
         let mut lower_bound = 1;
-        if height > self.ver_window {
-            lower_bound = height - self.ver_window;
+        let upper_bound = height;
+        let cur_height = self.height().c(d!("error reading current height"))?;
+        if height > cur_height {
+            return self.get(key);
+        }
+        if cur_height > self.ver_window {
+            lower_bound = cur_height.saturating_sub(self.ver_window);
         }
         //Iterate in descending order from upper bound until a value is found
         let mut result = None;
-        for h in (lower_bound..height + 1).rev() {
+        for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
             let key = Self::versioned_key(key, h);
             if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
                 if val.eq(&TOMBSTONE) {
@@ -476,6 +482,15 @@ impl<D: MerkleDB> ChainState<D> {
 
         //commit aux batch
         let _ = self.db.commit(batch, true);
+    }
+
+    /// Gets current versioning range of the chain-state
+    ///
+    /// returns a range of the current versioning window [lower, upper)
+    pub fn get_ver_range(&self) -> Result<Range<u64>> {
+        let upper = self.height().c(d!("error reading current height"))?;
+        let lower = upper.saturating_sub(self.ver_window);
+        Ok(lower..upper)
     }
 }
 
