@@ -489,7 +489,10 @@ impl<D: MerkleDB> ChainState<D> {
     /// returns a range of the current versioning window [lower, upper)
     pub fn get_ver_range(&self) -> Result<Range<u64>> {
         let upper = self.height().c(d!("error reading current height"))?;
-        let lower = upper.saturating_sub(self.ver_window);
+        let mut lower = 1;
+        if upper > self.ver_window {
+            lower = upper.saturating_sub(self.ver_window);
+        }
         Ok(lower..upper)
     }
 }
