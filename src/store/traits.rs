@@ -47,13 +47,20 @@ where
         }
     }
 
-    /// deserialize object from Vec<u8>
-    fn from_vec<T>(&self, value: &[u8]) -> Result<T>
+    /// get object by key
+    ///
+    /// returns deserialized object if key exists or None otherwise
+    fn get_obj_v<T>(&self, key: &[u8], height: u64) -> Result<Option<T>>
     where
         T: de::DeserializeOwned,
     {
-        let obj = serde_json::from_slice::<T>(value).c(d!())?;
-        Ok(obj)
+        match self.get_v(key, height).c(d!())? {
+            Some(value) => {
+                let obj = self.from_vec(&value).c(d!())?;
+                Ok(Some(obj))
+            }
+            None => Ok(None),
+        }
     }
 
     /// get object by key
@@ -63,13 +70,32 @@ where
     where
         T: de::DeserializeOwned,
     {
-        match self.get(key).c(d!())? {
-            Some(value) => {
-                let obj = serde_json::from_slice::<T>(value.as_ref()).c(d!())?;
-                Ok(obj)
-            }
+        match self.get_obj(key).c(d!())? {
+            Some(value) => Ok(value),
             None => Ok(default),
         }
+    }
+
+    /// get versioned object by key
+    ///
+    /// return deserialized object if key exists or default object otherwise
+    fn get_obj_v_or<T>(&self, key: &[u8], default: T, height: u64) -> Result<T>
+    where
+        T: de::DeserializeOwned,
+    {
+        match self.get_obj_v(key, height).c(d!())? {
+            Some(value) => Ok(value),
+            None => Ok(default),
+        }
+    }
+
+    /// deserialize object from Vec<u8>
+    fn from_vec<T>(&self, value: &[u8]) -> Result<T>
+    where
+        T: de::DeserializeOwned,
+    {
+        let obj = serde_json::from_slice::<T>(value).c(d!())?;
+        Ok(obj)
     }
 
     /// get value. Returns None if deleted
@@ -178,6 +204,23 @@ pub trait StatelessStore {
         }
     }
 
+    /// get versioned object by key
+    ///
+    /// returns deserialized object if key exists or None otherwise
+    fn get_obj_v<T, D>(state: &State<D>, key: &[u8], height: u64) -> Result<Option<T>>
+    where
+        T: de::DeserializeOwned,
+        D: MerkleDB,
+    {
+        match state.get_ver(key, height).c(d!())? {
+            Some(value) => {
+                let obj = serde_json::from_slice::<T>(&value).c(d!())?;
+                Ok(Some(obj))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// get object by key
     ///
     /// return deserialized object if key exists or default object otherwise
@@ -185,11 +228,26 @@ pub trait StatelessStore {
     where
         T: de::DeserializeOwned,
     {
-        match state.get(key).c(d!())? {
-            Some(value) => {
-                let obj = serde_json::from_slice::<T>(value.as_ref()).c(d!())?;
-                Ok(obj)
-            }
+        match Self::get_obj(state, key).c(d!())? {
+            Some(value) => Ok(value),
+            None => Ok(default),
+        }
+    }
+
+    /// get versioned object by key
+    ///
+    /// return deserialized object if key exists or default object otherwise
+    fn get_obj_v_or<T, D: MerkleDB>(
+        state: &State<D>,
+        key: &[u8],
+        default: T,
+        height: u64,
+    ) -> Result<T>
+    where
+        T: de::DeserializeOwned,
+    {
+        match Self::get_obj_v(state, key, height).c(d!())? {
+            Some(value) => Ok(value),
             None => Ok(default),
         }
     }
