@@ -430,11 +430,13 @@ impl<D: MerkleDB> ChainState<D> {
         let mut result = None;
         for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
             let key = Self::versioned_key(key, h);
+            //Found a value matching key pattern, assign to result and break
             if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
                 if val.eq(&TOMBSTONE) {
                     break;
                 }
                 result = Some(val);
+                break;
             }
         }
         Ok(result)
@@ -1042,6 +1044,9 @@ mod tests {
             if height == 3 {
                 batch.push((b"test_key".to_vec(), Some(b"test-val1".to_vec())));
             }
+            if height == 4 {
+                batch.push((b"test_key".to_vec(), Some(b"test-val4".to_vec())));
+            }
             if height == 7 {
                 //Deleted key at height 7
                 batch.push((b"test_key".to_vec(), None));
@@ -1058,6 +1063,10 @@ mod tests {
             cs.get_ver(b"test_key", 3).unwrap(),
             Some(b"test-val1".to_vec())
         );
+        assert_eq!(
+            cs.get_ver(b"test_key", 4).unwrap(),
+            Some(b"test-val4".to_vec())
+        );
         assert_eq!(cs.get_ver(b"test_key", 7).unwrap(), None);
         assert_eq!(
             cs.get_ver(b"test_key", 15).unwrap(),
@@ -1067,7 +1076,7 @@ mod tests {
         //Query the key between update versions
         assert_eq!(
             cs.get_ver(b"test_key", 5).unwrap(),
-            Some(b"test-val1".to_vec())
+            Some(b"test-val4".to_vec())
         );
         assert_eq!(
             cs.get_ver(b"test_key", 17).unwrap(),
