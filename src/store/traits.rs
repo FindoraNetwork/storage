@@ -330,6 +330,7 @@ pub trait StatelessStore {
 
     /// put/update KV
     fn set<D: MerkleDB>(state: &mut State<D>, key: &[u8], value: Vec<u8>) -> Result<()> {
+        println!("Value size after: {:?}", value.len());
         state.set(key, value)
     }
 
