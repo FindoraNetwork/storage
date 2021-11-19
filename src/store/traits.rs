@@ -324,7 +324,7 @@ pub trait StatelessStore {
     {
         let value = serde_json::to_vec(obj).c(d!())?;
         println!("Value size after serialization: {:?}", value.len());
-        println!("Value object after serialization: {:?}", value);
+        //println!("Value object after serialization: {:?}", value);
         state.set(key.as_ref(), value)
     }
 
