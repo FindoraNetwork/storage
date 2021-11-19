@@ -323,6 +323,7 @@ pub trait StatelessStore {
         D: MerkleDB,
     {
         let value = serde_json::to_vec(obj).c(d!())?;
+        println!("Value size after serialization: {:?}", value.len());
         state.set(key.as_ref(), value)
     }
 
