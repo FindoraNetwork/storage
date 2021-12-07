@@ -15,6 +15,7 @@ use std::sync::Arc;
 ///
 /// Contains a Reference to the ChainState and a Session Cache used for collecting batch data
 /// and transaction simulation.
+#[derive(Clone)]
 pub struct State<D: MerkleDB> {
     chain_state: Arc<RwLock<ChainState<D>>>,
     cache: SessionedCache,

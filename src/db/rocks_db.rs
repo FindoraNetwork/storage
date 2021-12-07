@@ -64,6 +64,10 @@ impl RocksDB {
         let state_cf = self.db.cf_handle(CF_STATE).unwrap();
         self.db.iterator_cf_opt(state_cf, readopts, mode)
     }
+    
+    pub fn clone(&self) -> Self {
+        RocksDB::open(self.path.clone()).unwrap()
+    }
 }
 
 impl MerkleDB for RocksDB {
