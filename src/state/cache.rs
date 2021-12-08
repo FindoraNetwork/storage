@@ -23,6 +23,7 @@ impl<'a> Iterator for CacheIter<'a> {
 }
 
 /// sessioned KV cache
+#[derive(Clone)]
 pub struct SessionedCache {
     cur: KVMap,
     base: KVMap,

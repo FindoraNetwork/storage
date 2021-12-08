@@ -416,11 +416,16 @@ impl<D: MerkleDB> ChainState<D> {
     /// Returns the value of the given key at a particular height
     /// Returns None if the key was deleted or invalid at height H
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        //Make sure that this key exists to avoid expensive query
+        if self.get(key).c(d!("error getting value"))?.is_none() {
+            return Ok(None);
+        }
+
         //Need to set lower and upper bound as the height can get very large
         let mut lower_bound = 1;
         let upper_bound = height;
         let cur_height = self.height().c(d!("error reading current height"))?;
-        if height > cur_height {
+        if height >= cur_height {
             return self.get(key);
         }
         if cur_height > self.ver_window {

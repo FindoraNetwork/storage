@@ -41,6 +41,42 @@ impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
     }
 }
 
+
+/// Merkle-based prefixed store
+pub struct ImmutablePrefixedStore<'a, D: MerkleDB> {
+    pfx: Prefix,
+    state: &'a State<D>,
+}
+
+impl<'a, D: MerkleDB> Stated<'a, D> for ImmutablePrefixedStore<'a, D> {
+    fn set_state(&mut self, _state: &'a mut State<D>) {
+        panic!("State in immutable in this store")
+    }
+
+    fn state(&self) -> &State<D> {
+        &self.state
+    }
+
+    fn state_mut(&mut self) -> &mut State<D> {
+        panic!("State in immutable in this store")
+    }
+
+    fn prefix(&self) -> Prefix {
+        self.pfx.clone()
+    }
+}
+
+impl<'a, D: MerkleDB> Store<'a, D> for ImmutablePrefixedStore<'a, D> {}
+
+impl<'a, D: MerkleDB> ImmutablePrefixedStore<'a, D> {
+    pub fn new(prefix: &str, state: &'a State<D>) -> Self {
+        ImmutablePrefixedStore {
+            pfx: Prefix::new(prefix.as_bytes()),
+            state,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
