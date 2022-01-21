@@ -28,8 +28,8 @@ impl<D: MerkleDB> State<D> {
         }
     }
 
-    pub fn merge(&mut self, o: Self) {
-        self.cache.merge(o.cache);
+    pub fn merge(&mut self, o: &mut Self) {
+        self.cache.merge(&mut o.cache);
     }
 }
 

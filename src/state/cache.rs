@@ -40,8 +40,7 @@ impl SessionedCache {
         }
     }
 
-    pub fn merge(&mut self, o: Self) {
-        let mut o = o;
+    pub fn merge(&mut self, o: &mut Self) {
         self.cur.append(&mut o.cur);
         self.base.append(&mut o.cur);
     }
