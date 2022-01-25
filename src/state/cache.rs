@@ -40,6 +40,11 @@ impl SessionedCache {
         }
     }
 
+    pub fn merge(&mut self, o: &mut Self) {
+        self.cur.append(&mut o.cur);
+        self.base.append(&mut o.cur);
+    }
+
     /// put/update value by key
     pub fn put(&mut self, key: &[u8], value: Vec<u8>) -> bool {
         if Self::check_kv(key, &value, self.is_merkle) {

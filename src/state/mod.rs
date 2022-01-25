@@ -20,6 +20,15 @@ pub struct State<D: MerkleDB> {
     cache: SessionedCache,
 }
 
+impl<D: MerkleDB> State<D> {
+    pub fn substate(&self) -> Self {
+        Self {
+            chain_state: self.chain_state.clone(),
+            cache: self.cache.clone(),
+        }
+    }
+}
+
 /// Implementation of concrete State struct
 impl<D> State<D>
 where
