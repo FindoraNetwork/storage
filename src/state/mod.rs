@@ -27,10 +27,6 @@ impl<D: MerkleDB> State<D> {
             cache: self.cache.clone(),
         }
     }
-
-    pub fn merge(&mut self, o: &mut Self) {
-        self.cache.merge(&mut o.cache);
-    }
 }
 
 /// Implementation of concrete State struct
