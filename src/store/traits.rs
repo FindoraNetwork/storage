@@ -94,7 +94,7 @@ where
     where
         T: de::DeserializeOwned,
     {
-        let obj = serde_json::from_slice::<T>(value).c(d!())?;
+        let obj = bincode::deserialize::<T>(value).c(d!())?;
         Ok(obj)
     }
 
@@ -168,7 +168,7 @@ where
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(obj).c(d!())?;
+        let value = bincode::serialize(obj).c(d!())?;
         self.set(key.as_ref(), value)
     }
 
@@ -197,7 +197,7 @@ pub trait StatelessStore {
     {
         match state.get(key).c(d!())? {
             Some(value) => {
-                let obj = serde_json::from_slice::<T>(&value).c(d!())?;
+                let obj = bincode::deserialize::<T>(&value).c(d!())?;
                 Ok(Some(obj))
             }
             None => Ok(None),
@@ -214,7 +214,7 @@ pub trait StatelessStore {
     {
         match state.get_ver(key, height).c(d!())? {
             Some(value) => {
-                let obj = serde_json::from_slice::<T>(&value).c(d!())?;
+                let obj = bincode::deserialize::<T>(&value).c(d!())?;
                 Ok(Some(obj))
             }
             None => Ok(None),
@@ -322,7 +322,7 @@ pub trait StatelessStore {
         T: ?Sized + Serialize,
         D: MerkleDB,
     {
-        let value = serde_json::to_vec(obj).c(d!())?;
+        let value = bincode::serialize(obj).c(d!())?;
         state.set(key.as_ref(), value)
     }
 
