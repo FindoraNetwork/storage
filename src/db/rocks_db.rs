@@ -64,8 +64,10 @@ impl RocksDB {
         let state_cf = self.db.cf_handle(CF_STATE).unwrap();
         self.db.iterator_cf_opt(state_cf, readopts, mode)
     }
-    
-    pub fn clone(&self) -> Self {
+}
+
+impl Clone for RocksDB {
+    fn clone(&self) -> Self {
         RocksDB::open(self.path.clone()).unwrap()
     }
 }
@@ -74,6 +76,20 @@ impl MerkleDB for RocksDB {
     /// RocksDB always return empty hash
     fn root_hash(&self) -> Vec<u8> {
         vec![]
+    }
+
+    /// Gets a value for the given key. If the key is not found, `None` is returned.
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        if let Some(cf) = self.db.cf_handle(CF_STATE) {
+            Ok(self.db.get_cf(cf, key).c(d!("get data failed"))?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Gets an auxiliary value.
+    fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.get(key)
     }
 
     /// Puts a batch of KVs
@@ -95,20 +111,6 @@ impl MerkleDB for RocksDB {
         self.db.write_opt(batch, &opts).c(d!())?;
 
         Ok(())
-    }
-
-    /// Gets a value for the given key. If the key is not found, `None` is returned.
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if let Some(cf) = self.db.cf_handle(CF_STATE) {
-            Ok(self.db.get_cf(cf, key).c(d!("get data failed"))?)
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Gets an auxiliary value.
-    fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.get(key)
     }
 
     /// Gets range iterator

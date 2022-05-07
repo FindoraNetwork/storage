@@ -18,7 +18,7 @@ impl<'a, D: MerkleDB> Stated<'a, D> for PrefixedStore<'a, D> {
     }
 
     fn state(&self) -> &State<D> {
-        &self.state
+        self.state
     }
 
     fn state_mut(&mut self) -> &mut State<D> {
@@ -53,7 +53,7 @@ impl<'a, D: MerkleDB> Stated<'a, D> for ImmutablePrefixedStore<'a, D> {
     }
 
     fn state(&self) -> &State<D> {
-        &self.state
+        self.state
     }
 
     fn state_mut(&mut self) -> &mut State<D> {
