@@ -1,3 +1,5 @@
+extern crate core;
+
 /// The merkle db
 pub mod db;
 pub mod state;

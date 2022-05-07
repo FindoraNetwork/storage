@@ -41,7 +41,6 @@ impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
     }
 }
 
-
 /// Merkle-based prefixed store
 pub struct ImmutablePrefixedStore<'a, D: MerkleDB> {
     pfx: Prefix,
@@ -468,11 +467,26 @@ mod tests {
         // check cached stakes before committing tx session
         let kvs: Vec<_> = store.iter_cur(store.prefix()).collect();
         let expected = vec![
-            (b"stake_pool".to_vec(), b"1400".to_vec()),
-            (b"stake_validator_fra2222".to_vec(), b"200".to_vec()),
-            (b"stake_validator_fra3333".to_vec(), b"300".to_vec()),
-            (b"stake_validator_fra44555".to_vec(), b"400".to_vec()),
-            (b"stake_validator_fra55667".to_vec(), b"500".to_vec()),
+            (
+                b"stake_pool".to_vec(),
+                bincode::serialize(&1400u64).unwrap(),
+            ),
+            (
+                b"stake_validator_fra2222".to_vec(),
+                bincode::serialize(&200u64).unwrap(),
+            ),
+            (
+                b"stake_validator_fra3333".to_vec(),
+                bincode::serialize(&300u64).unwrap(),
+            ),
+            (
+                b"stake_validator_fra44555".to_vec(),
+                bincode::serialize(&400u64).unwrap(),
+            ),
+            (
+                b"stake_validator_fra55667".to_vec(),
+                bincode::serialize(&500u64).unwrap(),
+            ),
         ];
         assert_eq!(kvs, expected);
 
