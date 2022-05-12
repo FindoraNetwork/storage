@@ -4,7 +4,7 @@
 pub mod cache;
 pub mod chain_state;
 
-use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
+use crate::db::{IterOrder, KValue, MerkleDB};
 pub use cache::{KVMap, KVecMap, SessionedCache};
 pub use chain_state::ChainState;
 use parking_lot::RwLock;
@@ -158,8 +158,8 @@ where
     /// Commits the cache of the current session.
     ///
     /// The Base cache gets updated with the current cache.
-    pub fn commit_session(&mut self) -> KVBatch {
-        self.cache.commit()
+    pub fn commit_session(&mut self) {
+        self.cache.commit_only();
     }
 
     /// Discards the current session cache.
@@ -479,10 +479,7 @@ mod tests {
         state.set(b"prefix_validator_4", b"v40".to_vec()).unwrap();
         let _res = state.delete(b"prefix_validator_4");
 
-        println!(
-            "test_delete Batch after delete: {:?}",
-            state.commit_session()
-        );
+        println!("test_delete Batch after delete: {:?}", state.cache.commit());
 
         //Delete key from chain state
         let _res2 = state.delete(b"prefix_validator_3");
