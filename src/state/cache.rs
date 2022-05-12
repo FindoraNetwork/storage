@@ -75,6 +75,12 @@ impl SessionedCache {
         self.values()
     }
 
+    /// commits pending KVs in session without return them
+    pub fn commit_only(&mut self) {
+        // Merge current key value updates to the base version
+        self.rebase();
+    }
+
     /// discards pending KVs in session
     ///
     /// rollback to base
