@@ -29,6 +29,7 @@ pub struct SessionedCache {
     base: KVMap,
     backend: Vec<Vec<u8>>,
     is_merkle: bool,
+    synced: bool,
 }
 
 #[allow(clippy::new_without_default)]
@@ -39,6 +40,7 @@ impl SessionedCache {
             base: KVMap::new(),
             backend: vec![],
             is_merkle,
+            synced: true,
         }
     }
 
@@ -53,6 +55,7 @@ impl SessionedCache {
     /// put/update value by key
     pub fn put(&mut self, key: &[u8], value: Vec<u8>) -> bool {
         if Self::check_kv(key, &value, self.is_merkle) {
+            self.synced = false;
             self.backend.push(value);
             self.cur
                 .insert(key.to_owned(), Some(self.backend.len() - 1));
@@ -63,6 +66,7 @@ impl SessionedCache {
 
     /// delete key-pair by marking as None
     pub fn delete(&mut self, key: &[u8]) {
+        self.synced = false;
         self.cur.insert(key.to_owned(), None);
     }
 
@@ -70,6 +74,7 @@ impl SessionedCache {
     ///
     /// key may still exist in base after removal
     pub fn remove(&mut self, key: &[u8]) {
+        self.synced = false;
         self.cur.remove(key);
     }
 
@@ -92,7 +97,10 @@ impl SessionedCache {
     ///
     /// rollback to base
     pub fn discard(&mut self) {
-        self.cur = self.base.clone();
+        if !self.synced {
+            self.cur = self.base.clone();
+            self.synced = true;
+        }
     }
 
     /// KV touched or not so far
@@ -214,7 +222,10 @@ impl SessionedCache {
 
     /// rebases cur KVs onto base
     fn rebase(&mut self) {
-        self.base = self.cur.clone();
+        if !self.synced {
+            self.base = self.cur.clone();
+            self.synced = true;
+        }
     }
 
     /// checks key value ranges
