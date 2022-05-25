@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::iter::Iterator;
 
 /// key-value map
-pub type KVMap = BTreeMap<Vec<u8>, Option<Vec<u8>>>;
+pub type KVMap = BTreeMap<Vec<u8>, Option<usize>>;
 pub type KVecMap = BTreeMap<Vec<u8>, Vec<u8>>;
 
 /// size limits on KEY and VALUE
@@ -12,11 +12,11 @@ const MAX_MERK_VAL_LEN: u16 = u16::MAX;
 
 /// cache iterator
 pub struct CacheIter<'a> {
-    iter: std::collections::btree_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>,
+    iter: std::collections::btree_map::Iter<'a, Vec<u8>, Option<usize>>,
 }
 
 impl<'a> Iterator for CacheIter<'a> {
-    type Item = (&'a Vec<u8>, &'a Option<Vec<u8>>);
+    type Item = (&'a Vec<u8>, &'a Option<usize>);
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
     }
@@ -27,6 +27,7 @@ impl<'a> Iterator for CacheIter<'a> {
 pub struct SessionedCache {
     cur: KVMap,
     base: KVMap,
+    backend: Vec<Vec<u8>>,
     is_merkle: bool,
 }
 
@@ -36,11 +37,15 @@ impl SessionedCache {
         SessionedCache {
             cur: KVMap::new(),
             base: KVMap::new(),
+            backend: vec![],
             is_merkle,
         }
     }
 
     pub fn merge(&mut self, o: &mut Self) {
+        let len = self.backend.len();
+        self.backend.append(&mut o.backend);
+        o.cur.iter_mut().for_each(|(_, v)| *v = v.map(|v| v + len));
         self.cur.append(&mut o.cur);
         self.base.append(&mut o.cur);
     }
@@ -48,7 +53,9 @@ impl SessionedCache {
     /// put/update value by key
     pub fn put(&mut self, key: &[u8], value: Vec<u8>) -> bool {
         if Self::check_kv(key, &value, self.is_merkle) {
-            self.cur.insert(key.to_owned(), Some(value));
+            self.backend.push(value);
+            self.cur
+                .insert(key.to_owned(), Some(self.backend.len() - 1));
             return true;
         }
         false
@@ -125,7 +132,12 @@ impl SessionedCache {
         let kvs: Vec<_> = self
             .cur
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.map(|v| self.backend.get(v.clone()).unwrap().clone()),
+                )
+            })
             .collect();
         kvs
     }
@@ -157,7 +169,7 @@ impl SessionedCache {
     /// returns None otherwise
     pub fn getv(&self, key: &[u8]) -> Option<Vec<u8>> {
         match self.cur.get(key) {
-            Some(Some(value)) => Some(value.clone()),
+            Some(Some(value)) => Some(self.backend.get(value.to_owned()).unwrap().clone()),
             Some(None) => None,
             None => None,
         }
@@ -172,7 +184,7 @@ impl SessionedCache {
     /// returns None otherwise
     pub fn get(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
         match self.cur.get(key) {
-            Some(Some(value)) => Some(Some(value.clone())),
+            Some(Some(value)) => Some(Some(self.backend.get(value.to_owned()).unwrap().clone())),
             Some(None) => Some(None),
             None => None,
         }
@@ -191,7 +203,8 @@ impl SessionedCache {
         for (k, v) in self.cur.iter() {
             if k.starts_with(prefix) {
                 if v.is_some() {
-                    map.insert(k.to_owned(), v.to_owned().unwrap());
+                    let v = self.backend.get(v.unwrap()).unwrap().clone();
+                    map.insert(k.to_owned(), v);
                 } else {
                     map.remove(k);
                 }

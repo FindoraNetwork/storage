@@ -4,10 +4,10 @@
 /// and RocksDB backend.
 ///
 use crate::db::{IterOrder, KVBatch, KVEntry, KValue, MerkleDB};
-use crate::state::cache::KVMap;
 use crate::store::Prefix;
 use fmerk::tree::NULL_HASH;
 use ruc::*;
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 use std::str;
@@ -268,7 +268,7 @@ impl<D: MerkleDB> ChainState<D> {
 
         // Replay historical commit, if any, on every height
         for h in *ver_range.start()..=height {
-            let mut kvs = KVMap::new();
+            let mut kvs = BTreeMap::<Vec<u8>, Option<Vec<u8>>>::new();
 
             // setup bounds
             let lower = Prefix::new("VER".as_bytes()).push(Self::height_str(h).as_bytes());
@@ -375,7 +375,7 @@ impl<D: MerkleDB> ChainState<D> {
     /// Returns a batch with KV pairs valid at height H
     pub fn build_state(&self, height: u64, with_version: bool) -> KVBatch {
         //New map to store KV pairs
-        let mut map = KVMap::new();
+        let mut map = BTreeMap::<Vec<u8>, Option<Vec<u8>>>::new();
 
         let lower = Prefix::new("VER".as_bytes());
         let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
