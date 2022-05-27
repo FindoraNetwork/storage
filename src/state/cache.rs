@@ -1,5 +1,5 @@
 use crate::db::KVBatch;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter::Iterator;
 
 /// key-value map
@@ -12,20 +12,37 @@ const MAX_MERK_VAL_LEN: u16 = u16::MAX;
 
 /// cache iterator
 pub struct CacheIter<'a> {
+    cache: &'a SessionedCache,
+    in_base: bool,
     iter: std::collections::btree_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>,
 }
 
 impl<'a> Iterator for CacheIter<'a> {
     type Item = (&'a Vec<u8>, &'a Option<Vec<u8>>);
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
+        loop {
+            if let Some(item) = self.iter.next() {
+                if !self.in_base // iterating delta
+                    || (!self.cache.delta.contains_key(item.0)
+                        && !self.cache.removed.contains_key(item.0))
+                {
+                    break Some(item);
+                }
+            } else if self.in_base {
+                self.in_base = false;
+                self.iter = self.cache.delta.iter();
+            } else {
+                break None;
+            }
+        }
     }
 }
 
 /// sessioned KV cache
 #[derive(Clone)]
 pub struct SessionedCache {
-    cur: KVMap,
+    delta: KVMap,
+    removed: KVMap,
     base: KVMap,
     is_merkle: bool,
 }
@@ -34,21 +51,23 @@ pub struct SessionedCache {
 impl SessionedCache {
     pub fn new(is_merkle: bool) -> Self {
         SessionedCache {
-            cur: KVMap::new(),
+            delta: KVMap::new(),
+            removed: KVMap::new(),
             base: KVMap::new(),
             is_merkle,
         }
     }
 
     pub fn merge(&mut self, o: &mut Self) {
-        self.cur.append(&mut o.cur);
-        self.base.append(&mut o.cur);
+        o.rebase();
+        self.base.append(&mut o.base);
     }
 
     /// put/update value by key
     pub fn put(&mut self, key: &[u8], value: Vec<u8>) -> bool {
         if Self::check_kv(key, &value, self.is_merkle) {
-            self.cur.insert(key.to_owned(), Some(value));
+            self.delta.insert(key.to_owned(), Some(value));
+            self.removed.remove(key);
             return true;
         }
         false
@@ -56,14 +75,16 @@ impl SessionedCache {
 
     /// delete key-pair by marking as None
     pub fn delete(&mut self, key: &[u8]) {
-        self.cur.insert(key.to_owned(), None);
+        self.delta.insert(key.to_owned(), None);
+        self.removed.remove(key);
     }
 
     /// Remove Key from cur
     ///
     /// key may still exist in base after removal
     pub fn remove(&mut self, key: &[u8]) {
-        self.cur.remove(key);
+        self.delta.remove(key);
+        self.removed.insert(key.to_owned(), None);
     }
 
     /// commits pending KVs in session
@@ -85,7 +106,8 @@ impl SessionedCache {
     ///
     /// rollback to base
     pub fn discard(&mut self) {
-        self.cur = self.base.clone();
+        self.delta.clear();
+        self.removed.clear();
     }
 
     /// KV touched or not so far
@@ -96,7 +118,8 @@ impl SessionedCache {
     ///
     /// use case: when KV is not allowed to updated twice
     pub fn touched(&self, key: &[u8]) -> bool {
-        self.cur.contains_key(key)
+        self.delta.contains_key(key)
+            || (!self.removed.contains_key(key) && self.base.contains_key(key))
     }
 
     /// Returns whether the cache is used for MerkDB or RocksDB
@@ -108,7 +131,9 @@ impl SessionedCache {
     ///
     /// use case: stop reading KV from db if already deleted
     pub fn deleted(&self, key: &[u8]) -> bool {
-        if let Some(None) = self.cur.get(key) {
+        if self.delta.get(key) == Some(&None)
+            || (!self.removed.contains_key(key) && self.base.get(key) == Some(&None))
+        {
             return true;
         }
         false
@@ -116,18 +141,21 @@ impl SessionedCache {
 
     /// keys that have been touched
     pub fn keys(&self) -> Vec<Vec<u8>> {
-        let keys: Vec<_> = self.cur.keys().cloned().collect();
-        keys
+        let mut keys: BTreeSet<_> = self.base.keys().chain(self.delta.keys()).cloned().collect();
+        self.removed.keys().for_each(|k| {
+            keys.remove(k);
+        });
+        keys.into_iter().collect()
     }
 
     /// get all KVs
     pub fn values(&self) -> KVBatch {
-        let kvs: Vec<_> = self
-            .cur
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        kvs
+        let mut kvs = self.base.clone();
+        kvs.append(&mut self.delta.clone());
+        self.removed.keys().for_each(|k| {
+            kvs.remove(k);
+        });
+        kvs.into_iter().collect()
     }
 
     /// has value or not
@@ -140,13 +168,16 @@ impl SessionedCache {
     ///
     /// use case: get from cache instead of db whenever hasv() returns true.
     pub fn hasv(&self, key: &[u8]) -> bool {
-        match self.cur.get(key) {
+        match self.delta.get(key) {
             // has value
             Some(Some(_)) => true,
             // deleted
             Some(None) => false,
-            // nerver see it
-            None => false,
+            None => {
+                // false: removed already or never see it
+                // true: found in base and not removed
+                !self.removed.contains_key(key) && self.base.contains_key(key)
+            }
         }
     }
 
@@ -156,10 +187,19 @@ impl SessionedCache {
     ///
     /// returns None otherwise
     pub fn getv(&self, key: &[u8]) -> Option<Vec<u8>> {
-        match self.cur.get(key) {
+        match self.delta.get(key) {
             Some(Some(value)) => Some(value.clone()),
             Some(None) => None,
-            None => None,
+            None => {
+                if self.removed.contains_key(key) {
+                    None
+                } else {
+                    match self.base.get(key) {
+                        Some(value) => value.clone(),
+                        None => None,
+                    }
+                }
+            }
         }
     }
 
@@ -171,29 +211,41 @@ impl SessionedCache {
     ///
     /// returns None otherwise
     pub fn get(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
-        match self.cur.get(key) {
+        match self.delta.get(key) {
             Some(Some(value)) => Some(Some(value.clone())),
             Some(None) => Some(None),
-            None => None,
+            None => {
+                if self.removed.contains_key(key) {
+                    None
+                } else {
+                    match self.base.get(key) {
+                        Some(Some(value)) => Some(Some(value.clone())),
+                        Some(None) => Some(None),
+                        None => None,
+                    }
+                }
+            }
         }
     }
 
     /// iterator
     pub fn iter(&self) -> CacheIter {
         CacheIter {
-            iter: self.cur.iter(),
+            iter: self.base.iter(),
+            in_base: true,
+            cache: self,
         }
     }
 
     /// prefix iterator
     pub fn iter_prefix(&self, prefix: &[u8], map: &mut KVecMap) {
         // insert/update new KVs and remove deleted KVs
-        for (k, v) in self.cur.iter() {
+        for (k, v) in self.iter() {
             if k.starts_with(prefix) {
-                if v.is_some() {
-                    map.insert(k.to_owned(), v.to_owned().unwrap());
+                if let Some(v) = v {
+                    map.insert(k.to_owned(), v.to_owned());
                 } else {
-                    map.remove(k);
+                    map.remove(k.as_slice());
                 }
             }
         }
@@ -201,7 +253,12 @@ impl SessionedCache {
 
     /// rebases cur KVs onto base
     fn rebase(&mut self) {
-        self.base = self.cur.clone();
+        self.base.append(&mut self.delta);
+        for (k, _) in self.removed.iter() {
+            self.base.remove(k);
+        }
+        self.delta.clear();
+        self.removed.clear();
     }
 
     /// checks key value ranges
