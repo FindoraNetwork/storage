@@ -21,14 +21,16 @@ impl<'a> Iterator for CacheIter<'a> {
     type Item = (&'a Vec<u8>, &'a Option<Vec<u8>>);
     fn next(&mut self) -> Option<Self::Item> {
         loop {
+            // Iterates self.base and then self.delta
+            // KVs that modified in self.delta will be skipped when iterating self.base.
             if let Some(item) = self.iter.next() {
                 if !self.in_base // iterating delta
-                    || (!self.cache.delta.contains_key(item.0)
-                        && !self.cache.removed.contains_key(item.0))
+                    || !self.cache.delta.contains_key(item.0)
                 {
                     break Some(item);
                 }
             } else if self.in_base {
+                // switch to delta when base finish
                 self.in_base = false;
                 self.iter = self.cache.delta.iter();
             } else {
@@ -42,7 +44,6 @@ impl<'a> Iterator for CacheIter<'a> {
 #[derive(Clone)]
 pub struct SessionedCache {
     delta: KVMap,
-    removed: KVMap,
     base: KVMap,
     is_merkle: bool,
 }
@@ -52,53 +53,50 @@ impl SessionedCache {
     pub fn new(is_merkle: bool) -> Self {
         SessionedCache {
             delta: KVMap::new(),
-            removed: KVMap::new(),
             base: KVMap::new(),
             is_merkle,
         }
-    }
-
-    pub fn merge(&mut self, o: &mut Self) {
-        o.rebase();
-        self.base.append(&mut o.base);
     }
 
     /// put/update value by key
     pub fn put(&mut self, key: &[u8], value: Vec<u8>) -> bool {
         if Self::check_kv(key, &value, self.is_merkle) {
             self.delta.insert(key.to_owned(), Some(value));
-            self.removed.remove(key);
             return true;
         }
         false
     }
 
-    /// delete key-pair by marking as None
+    /// delete key-pair (when it EXIST in db) by marking as None
     pub fn delete(&mut self, key: &[u8]) {
         self.delta.insert(key.to_owned(), None);
-        self.removed.remove(key);
     }
 
-    /// Remove Key from cur
+    /// Remove key-pair (when NOT EXIST in db) from cache
     ///
     /// key may still exist in base after removal
     pub fn remove(&mut self, key: &[u8]) {
-        self.delta.remove(key);
-        self.removed.insert(key.to_owned(), None);
+        // exist in delta
+        if let Some(Some(_)) = self.delta.get(key) {
+            self.delta.remove(key);
+        } else if let Some(Some(_)) = self.base.get(key) {
+            // exist only in base
+            self.delta.insert(key.to_owned(), None);
+        }
     }
 
     /// commits pending KVs in session
     pub fn commit(&mut self) -> KVBatch {
-        // Merge current key value updates to the base version
+        // Merge delta into the base version
         self.rebase();
 
-        // Return current batch
+        // Return updated values
         self.values()
     }
 
     /// commits pending KVs in session without return them
     pub fn commit_only(&mut self) {
-        // Merge current key value updates to the base version
+        // Merge delta into the base version
         self.rebase();
     }
 
@@ -107,7 +105,6 @@ impl SessionedCache {
     /// rollback to base
     pub fn discard(&mut self) {
         self.delta.clear();
-        self.removed.clear();
     }
 
     /// KV touched or not so far
@@ -116,10 +113,9 @@ impl SessionedCache {
     ///
     /// KV is touched even when value stays same
     ///
-    /// use case: when KV is not allowed to updated twice
+    /// use case: when KV is not allowed to change twice in one block
     pub fn touched(&self, key: &[u8]) -> bool {
-        self.delta.contains_key(key)
-            || (!self.removed.contains_key(key) && self.base.contains_key(key))
+        self.delta.contains_key(key) || self.base.contains_key(key)
     }
 
     /// Returns whether the cache is used for MerkDB or RocksDB
@@ -131,9 +127,7 @@ impl SessionedCache {
     ///
     /// use case: stop reading KV from db if already deleted
     pub fn deleted(&self, key: &[u8]) -> bool {
-        if self.delta.get(key) == Some(&None)
-            || (!self.removed.contains_key(key) && self.base.get(key) == Some(&None))
-        {
+        if self.delta.get(key) == Some(&None) || self.base.get(key) == Some(&None) {
             return true;
         }
         false
@@ -141,10 +135,7 @@ impl SessionedCache {
 
     /// keys that have been touched
     pub fn keys(&self) -> Vec<Vec<u8>> {
-        let mut keys: BTreeSet<_> = self.base.keys().chain(self.delta.keys()).cloned().collect();
-        self.removed.keys().for_each(|k| {
-            keys.remove(k);
-        });
+        let keys: BTreeSet<_> = self.base.keys().chain(self.delta.keys()).cloned().collect();
         keys.into_iter().collect()
     }
 
@@ -152,9 +143,6 @@ impl SessionedCache {
     pub fn values(&self) -> KVBatch {
         let mut kvs = self.base.clone();
         kvs.append(&mut self.delta.clone());
-        self.removed.keys().for_each(|k| {
-            kvs.remove(k);
-        });
         kvs.into_iter().collect()
     }
 
@@ -169,15 +157,13 @@ impl SessionedCache {
     /// use case: get from cache instead of db whenever hasv() returns true.
     pub fn hasv(&self, key: &[u8]) -> bool {
         match self.delta.get(key) {
-            // has value
-            Some(Some(_)) => true,
-            // deleted
-            Some(None) => false,
-            None => {
-                // false: removed already or never see it
-                // true: found in base and not removed
-                !self.removed.contains_key(key) && self.base.contains_key(key)
-            }
+            Some(Some(_)) => true, // has value in delta
+            Some(None) => false,   // deleted in delta
+            None => match self.base.get(key) {
+                Some(Some(_)) => true, // has value in base
+                Some(None) => false,   // deleted in delta
+                None => false,
+            },
         }
     }
 
@@ -190,16 +176,11 @@ impl SessionedCache {
         match self.delta.get(key) {
             Some(Some(value)) => Some(value.clone()),
             Some(None) => None,
-            None => {
-                if self.removed.contains_key(key) {
-                    None
-                } else {
-                    match self.base.get(key) {
-                        Some(value) => value.clone(),
-                        None => None,
-                    }
-                }
-            }
+            None => match self.base.get(key) {
+                Some(Some(value)) => Some(value.clone()),
+                Some(None) => None,
+                None => None,
+            },
         }
     }
 
@@ -207,24 +188,18 @@ impl SessionedCache {
     ///
     /// returns Some(Some(value)) if available
     ///
-    /// returns Some(Some(None))  if deleted
+    /// returns Some(None)  if deleted
     ///
-    /// returns None otherwise
+    /// returns None otherwise. Note: Now used for test only.
     pub fn get(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
         match self.delta.get(key) {
             Some(Some(value)) => Some(Some(value.clone())),
             Some(None) => Some(None),
-            None => {
-                if self.removed.contains_key(key) {
-                    None
-                } else {
-                    match self.base.get(key) {
-                        Some(Some(value)) => Some(Some(value.clone())),
-                        Some(None) => Some(None),
-                        None => None,
-                    }
-                }
-            }
+            None => match self.base.get(key) {
+                Some(Some(value)) => Some(Some(value.clone())),
+                Some(None) => Some(None),
+                None => None,
+            },
         }
     }
 
@@ -254,11 +229,6 @@ impl SessionedCache {
     /// rebases cur KVs onto base
     fn rebase(&mut self) {
         self.base.append(&mut self.delta);
-        for (k, _) in self.removed.iter() {
-            self.base.remove(k);
-        }
-        self.delta.clear();
-        self.removed.clear();
     }
 
     /// checks key value ranges
@@ -658,7 +628,7 @@ mod tests {
 
         //Remove one of the values
         cache.remove(b"k40");
-        assert_eq!(cache.get(b"k40"), None);
+        assert_eq!(cache.get(b"k40"), Some(None));
 
         //Roll back above removal
         cache.discard();
@@ -667,7 +637,7 @@ mod tests {
         //Remove it again and commit
         cache.remove(b"k40");
         cache.commit();
-        assert_eq!(cache.get(b"k40"), None);
+        assert_eq!(cache.get(b"k40"), Some(None));
 
         //Remove a value that doesn't exist
         cache.remove(b"k50");
