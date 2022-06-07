@@ -1,9 +1,11 @@
 use crate::db::{to_batch, DBIter, IterOrder, KVBatch, KValue};
 use fmerk::{rocksdb, tree::Tree, Merk};
 use ruc::*;
+use std::iter::Iterator;
 use std::path::Path;
 
 /// Merkleized KV store interface
+
 pub trait MerkleDB {
     fn root_hash(&self) -> Vec<u8>;
 
@@ -13,9 +15,19 @@ pub trait MerkleDB {
 
     fn put_batch(&mut self, kvs: KVBatch) -> Result<()>;
 
-    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter;
+    fn iter(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_>;
 
-    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter;
+    fn iter_aux(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_>;
 
     fn commit(&mut self, kvs: KVBatch, flush: bool) -> Result<()>;
 
@@ -82,24 +94,36 @@ impl MerkleDB for FinDB {
     }
 
     /// Gets range iterator
-    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+    fn iter(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         let mut readopts = rocksdb::ReadOptions::default();
         readopts.set_iterate_lower_bound(lower.to_vec());
         readopts.set_iterate_upper_bound(upper.to_vec());
         match order {
-            IterOrder::Asc => self.db.iter_opt(rocksdb::IteratorMode::Start, readopts),
-            IterOrder::Desc => self.db.iter_opt(rocksdb::IteratorMode::End, readopts),
+            IterOrder::Asc => Box::new(self.db.iter_opt(rocksdb::IteratorMode::Start, readopts)),
+            IterOrder::Desc => Box::new(self.db.iter_opt(rocksdb::IteratorMode::End, readopts)),
         }
     }
 
     /// Gets range iterator for aux
-    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+    fn iter_aux(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         let mut readopts = rocksdb::ReadOptions::default();
         readopts.set_iterate_lower_bound(lower.to_vec());
         readopts.set_iterate_upper_bound(upper.to_vec());
         match order {
-            IterOrder::Asc => self.db.iter_opt_aux(rocksdb::IteratorMode::Start, readopts),
-            IterOrder::Desc => self.db.iter_opt_aux(rocksdb::IteratorMode::End, readopts),
+            IterOrder::Asc => {
+                Box::new(self.db.iter_opt_aux(rocksdb::IteratorMode::Start, readopts))
+            }
+            IterOrder::Desc => Box::new(self.db.iter_opt_aux(rocksdb::IteratorMode::End, readopts)),
         }
     }
 

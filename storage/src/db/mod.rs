@@ -3,11 +3,14 @@ mod rocks_db;
 mod temp_db;
 mod temp_db_rocks;
 
-use fmerk::{rocksdb, BatchEntry, Op};
+use fmerk::{BatchEntry, Op};
 pub use merk_db::{FinDB, MerkleDB};
 pub use rocks_db::RocksDB;
+use std::iter::Map;
 pub use temp_db::TempFinDB;
 pub use temp_db_rocks::TempRocksDB;
+
+pub type DBIter<'a> = Map<(Box<[u8]>, Box<[u8]>), (Box<[u8]>, Box<[u8]>)>;
 
 /// types
 pub type StoreKey = Vec<u8>;
@@ -15,8 +18,6 @@ pub type KValue = (StoreKey, Vec<u8>);
 pub type KVEntry = (StoreKey, Option<Vec<u8>>);
 pub type KVBatch = Vec<KVEntry>;
 
-/// iterator
-pub type DBIter<'a> = rocksdb::DBIterator<'a>;
 pub enum IterOrder {
     Asc,
     Desc,

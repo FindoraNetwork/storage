@@ -50,11 +50,21 @@ impl MerkleDB for TempRocksDB {
         self.deref().get(key)
     }
 
-    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+    fn iter(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         self.deref().iter(lower, upper, order)
     }
 
-    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+    fn iter_aux(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         self.deref().iter(lower, upper, order)
     }
 

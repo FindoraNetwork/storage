@@ -41,7 +41,6 @@ impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
     }
 }
 
-
 /// Merkle-based prefixed store
 pub struct ImmutablePrefixedStore<'a, D: MerkleDB> {
     pfx: Prefix,

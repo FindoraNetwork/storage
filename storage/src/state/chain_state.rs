@@ -418,6 +418,7 @@ impl<D: MerkleDB> ChainState<D> {
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
         //Make sure that this key exists to avoid expensive query
         if self.get(key).c(d!("error getting value"))?.is_none() {
+            println!("------------ none ---------");
             return Ok(None);
         }
 
@@ -433,6 +434,11 @@ impl<D: MerkleDB> ChainState<D> {
         }
         //Iterate in descending order from upper bound until a value is found
         let mut result = None;
+        println!(
+            "--- lower {} --- upper {}",
+            lower_bound,
+            upper_bound.saturating_add(1)
+        );
         for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
             let key = Self::versioned_key(key, h);
             //Found a value matching key pattern, assign to result and break

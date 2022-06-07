@@ -1,8 +1,8 @@
-use fmerk::Op;
+use fmerk::{rocksdb, Op};
 use ruc::*;
 use std::path::{Path, PathBuf};
 
-use crate::db::{rocksdb, to_batch, DBIter, IterOrder, KVBatch, KValue, MerkleDB};
+use crate::db::{to_batch, DBIter, IterOrder, KVBatch, KValue, MerkleDB};
 
 const CF_STATE: &str = "state";
 
@@ -64,7 +64,7 @@ impl RocksDB {
         let state_cf = self.db.cf_handle(CF_STATE).unwrap();
         self.db.iterator_cf_opt(state_cf, readopts, mode)
     }
-    
+
     pub fn clone(&self) -> Self {
         RocksDB::open(self.path.clone()).unwrap()
     }
@@ -112,18 +112,34 @@ impl MerkleDB for RocksDB {
     }
 
     /// Gets range iterator
-    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+    fn iter(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         let mut readopts = rocksdb::ReadOptions::default();
         readopts.set_iterate_lower_bound(lower.to_vec());
         readopts.set_iterate_upper_bound(upper.to_vec());
         match order {
-            IterOrder::Asc => self.iter_opt(rocksdb::IteratorMode::Start, readopts),
-            IterOrder::Desc => self.iter_opt(rocksdb::IteratorMode::End, readopts),
+            IterOrder::Asc => Box::new(
+                self.iter_opt(rocksdb::IteratorMode::Start, readopts)
+                    .into_iter(),
+            ),
+            IterOrder::Desc => Box::new(
+                self.iter_opt(rocksdb::IteratorMode::End, readopts)
+                    .into_iter(),
+            ),
         }
     }
 
     /// Gets range iterator for aux
-    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+    fn iter_aux(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         self.iter(lower, upper, order)
     }
 
