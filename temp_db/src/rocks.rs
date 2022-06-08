@@ -39,16 +39,16 @@ impl MerkleDB for TempRocksDB {
         self.deref().root_hash()
     }
 
-    fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
-        self.deref_mut().put_batch(kvs)
-    }
-
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.deref().get(key)
     }
 
     fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.deref().get(key)
+    }
+
+    fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
+        self.deref_mut().put_batch(kvs)
     }
 
     fn iter(
