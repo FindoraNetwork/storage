@@ -1,14 +1,12 @@
 [package]
 name = "storage"
-version = "0.1.2"
+version = "0.2.0"
 authors = ["FindoraNetwork"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
+parking_lot = "0.12"
+rand = "0.8"
 ruc = "1.0"
-parking_lot = "0.11.1"
-serde = "1.0.124"
-serde_json = "1.0.64"
-rand = "0.8.3"
-
-fmerk = { path = "../fmerk" }
+serde = "1.0"
+serde_json = "1.0"

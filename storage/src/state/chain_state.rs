@@ -6,7 +6,6 @@
 use crate::db::{IterOrder, KVBatch, KVEntry, KValue, MerkleDB};
 use crate::state::cache::KVMap;
 use crate::store::Prefix;
-use fmerk::tree::NULL_HASH;
 use ruc::*;
 use std::ops::Range;
 use std::path::Path;
@@ -15,6 +14,12 @@ use std::str;
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const SPLIT_BGN: &str = "_";
 const TOMBSTONE: [u8; 1] = [206u8];
+
+/// The length of a `Hash` (in bytes). same with fmerk.
+pub const HASH_LENGTH: usize = 32;
+
+/// A zero-filled `Hash`. same with fmerk.
+pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 
 /// Concrete ChainState struct containing a reference to an instance of MerkleDB, a name and
 /// current tree height.

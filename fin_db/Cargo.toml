@@ -1,5 +1,5 @@
 [package]
-name = "mem_db"
+name = "fin_db"
 version = "0.2.0"
 authors = ["FindoraNetwork"]
 edition = "2021"
@@ -7,3 +7,4 @@ edition = "2021"
 [dependencies]
 ruc = "1.0"
 storage = { path = "../storage", version = "0.2" }
+fmerk = { path = "../fmerk" }

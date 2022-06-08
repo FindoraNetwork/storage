@@ -1,9 +1,10 @@
-use crate::db::{DBIter, IterOrder, KVBatch, KValue, MerkleDB, RocksDB};
+use fin_db::RocksDB;
 use ruc::*;
 use std::env::temp_dir;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::time::SystemTime;
+use storage::db::{IterOrder, KVBatch, KValue, MerkleDB};
 
 /// Wraps a RocksDB instance and deletes it from disk it once it goes out of scope.
 pub struct TempRocksDB {

@@ -1,8 +1,11 @@
 [package]
 name = "temp_db"
-version = "0.1.0"
+version = "0.2.0"
+authors = ["FindoraNetwork"]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
+ruc = "1.0"
+storage = { path = "../storage", version = "0.2" }
+fmerk = { path = "../fmerk", version = "0.2" }
+fin_db = { path = "../fin_db", version = "0.2" }
