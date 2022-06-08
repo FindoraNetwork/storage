@@ -18,7 +18,7 @@ impl<'a, D: MerkleDB> Stated<'a, D> for PrefixedStore<'a, D> {
     }
 
     fn state(&self) -> &State<D> {
-        &self.state
+        self.state
     }
 
     fn state_mut(&mut self) -> &mut State<D> {
@@ -41,7 +41,6 @@ impl<'a, D: MerkleDB> PrefixedStore<'a, D> {
     }
 }
 
-
 /// Merkle-based prefixed store
 pub struct ImmutablePrefixedStore<'a, D: MerkleDB> {
     pfx: Prefix,
@@ -54,7 +53,7 @@ impl<'a, D: MerkleDB> Stated<'a, D> for ImmutablePrefixedStore<'a, D> {
     }
 
     fn state(&self) -> &State<D> {
-        &self.state
+        self.state
     }
 
     fn state_mut(&mut self) -> &mut State<D> {
@@ -409,7 +408,7 @@ mod tests {
         let pfx_v = store.prefix().push(b"validator");
         let mut actual = vec![];
         store.iter_db(pfx_v, true, &mut |(k, v)| {
-            let amt = store.from_vec::<u64>(&v);
+            let amt = StakeStore::<TempFinDB>::from_vec::<u64>(&v);
             actual.push((k, amt.unwrap()));
             false
         });
@@ -430,7 +429,7 @@ mod tests {
         let pfx_v = store.prefix().push(b"validator");
         let mut actual = vec![];
         store.iter_db(pfx_v, true, &mut |(k, v)| {
-            let amt = store.from_vec::<u64>(&v);
+            let amt = StakeStore::<TempFinDB>::from_vec::<u64>(&v);
             actual.push((k, amt.unwrap()));
             false
         });
@@ -554,7 +553,7 @@ mod tests {
                 let mut total = 0_u64;
                 let pfx_v = store.prefix().push(b"validator");
                 store.iter_db(pfx_v, true, &mut |(_, v)| {
-                    let amt = store.from_vec::<u64>(&v);
+                    let amt = StakeStore::<TempFinDB>::from_vec::<u64>(&v);
                     total += amt.unwrap();
                     false
                 });
@@ -582,7 +581,7 @@ mod tests {
                 let mut total = 0_u64;
                 let pfx_v = store.prefix().push(b"validator");
                 for (_, v) in store.iter_cur(pfx_v) {
-                    let amt = store.from_vec::<u64>(&v);
+                    let amt = StakeStore::<TempFinDB>::from_vec::<u64>(&v);
                     total += amt.unwrap();
                 }
                 let height = store.height().unwrap();
@@ -640,7 +639,7 @@ mod tests {
         let mut total = 0_u64;
         let pfx_v = store.prefix().push(b"validator");
         store.iter_db(pfx_v, true, &mut |(_, v)| {
-            let amt = store.from_vec::<u64>(&v);
+            let amt = StakeStore::<TempFinDB>::from_vec::<u64>(&v);
             total += amt.unwrap();
             false
         });

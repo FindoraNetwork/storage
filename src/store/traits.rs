@@ -40,7 +40,7 @@ where
     {
         match self.get(key).c(d!())? {
             Some(value) => {
-                let obj = self.from_vec(&value).c(d!())?;
+                let obj = Self::from_vec(&value).c(d!())?;
                 Ok(Some(obj))
             }
             None => Ok(None),
@@ -56,7 +56,7 @@ where
     {
         match self.get_v(key, height).c(d!())? {
             Some(value) => {
-                let obj = self.from_vec(&value).c(d!())?;
+                let obj = Self::from_vec(&value).c(d!())?;
                 Ok(Some(obj))
             }
             None => Ok(None),
@@ -90,7 +90,7 @@ where
     }
 
     /// deserialize object from Vec<u8>
-    fn from_vec<T>(&self, value: &[u8]) -> Result<T>
+    fn from_vec<T>(value: &[u8]) -> Result<T>
     where
         T: de::DeserializeOwned,
     {
