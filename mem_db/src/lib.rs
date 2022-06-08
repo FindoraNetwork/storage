@@ -1,13 +1,16 @@
 use ruc::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::env::temp_dir;
 use std::ops::Bound::{Excluded, Included};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use storage::db::{IterOrder, KVBatch, KValue, MerkleDB};
 
 /// Wraps a Findora db instance and deletes it from disk it once it goes out of scope.
 #[derive(Serialize, Deserialize)]
 pub struct MemoryDB {
+    temp: PathBuf,
     cache: BTreeMap<Box<[u8]>, Option<Box<[u8]>>>,
     inner: BTreeMap<Box<[u8]>, Option<Box<[u8]>>>,
     aux: BTreeMap<Box<[u8]>, Option<Box<[u8]>>>,
@@ -15,7 +18,14 @@ pub struct MemoryDB {
 
 impl MemoryDB {
     pub fn new() -> MemoryDB {
+        let time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut path = temp_dir();
+        path.push(format!("temp-memorydb–{}", time));
         MemoryDB {
+            temp: path,
             cache: BTreeMap::new(),
             inner: BTreeMap::new(),
             aux: BTreeMap::new(),
@@ -29,6 +39,7 @@ impl MemoryDB {
             bincode::deserialize(&bytes).map_err(|_e| eg!("deserialize failure"))
         } else {
             Ok(MemoryDB {
+                temp: path,
                 cache: BTreeMap::new(),
                 inner: BTreeMap::new(),
                 aux: BTreeMap::new(),
@@ -38,6 +49,7 @@ impl MemoryDB {
 
     /// Closes db and deletes all data from disk.
     pub fn destroy(&mut self) {
+        let _ = std::fs::remove_file(&self.temp);
         self.cache.clear();
         self.inner.clear();
     }
@@ -144,7 +156,8 @@ impl MerkleDB for MemoryDB {
                 .insert(k.into_boxed_slice(), v.map(|v| v.into_boxed_slice()));
         }
         if flush {
-            // TODO some local store cache.
+            let bytes = bincode::serialize(self).map_err(|_e| eg!("serialize failure"))?;
+            std::fs::write(&self.temp, bytes).map_err(|_e| eg!("write file failure"))?;
         }
         Ok(())
     }
@@ -340,7 +353,7 @@ mod tests {
             (b"k50".to_vec(), Some(b"v50".to_vec())),
         ])
         .unwrap();
-        fdb.commit(vec![], true).unwrap();
+        fdb.commit(vec![], false).unwrap();
 
         // iterate data on range ["k20", "k50")
         let iter = fdb.iter(b"k20", b"k50", IterOrder::Desc);
@@ -363,7 +376,7 @@ mod tests {
                 (b"k41".to_vec(), Some(b"v41".to_vec())),
                 (b"k51".to_vec(), Some(b"v51".to_vec())),
             ],
-            true,
+            false,
         )
         .unwrap();
 
@@ -407,7 +420,7 @@ mod tests {
                 (b"k21".to_vec(), Some(b"v21".to_vec())),
                 (b"k31".to_vec(), Some(b"v31".to_vec())),
             ],
-            true,
+            false,
         )
         .unwrap();
 
@@ -449,5 +462,6 @@ mod tests {
             .map(|(k, v)| (k.to_vec(), v.to_vec()))
             .collect::<Vec<_>>();
         assert_eq!(expected_aux, actual_aux);
+        fdb.destroy();
     }
 }
