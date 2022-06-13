@@ -104,9 +104,9 @@ impl Drop for TempFinDB {
 #[cfg(test)]
 mod tests {
     use super::TempFinDB;
-    use crate::db::{IterOrder, MerkleDB};
     use fmerk::tree::Tree;
     use std::thread;
+    use storage::db::{IterOrder, MerkleDB};
 
     #[test]
     fn db_put_n_get() {

@@ -199,8 +199,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{KValue, TempFinDB, TempRocksDB};
+    use crate::db::KValue;
     use std::thread;
+    use temp_db::{TempFinDB, TempRocksDB};
+
     const VER_WINDOW: u64 = 100;
 
     /// create chain state of `FinDB`

@@ -79,13 +79,13 @@ impl<'a, D: MerkleDB> ImmutablePrefixedStore<'a, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::TempFinDB;
     use crate::state::ChainState;
     use parking_lot::RwLock;
     use rand::Rng;
     use ruc::*;
     use std::sync::Arc;
     use std::{thread, time};
+    use temp_db::TempFinDB;
 
     const VER_WINDOW: u64 = 100;
 

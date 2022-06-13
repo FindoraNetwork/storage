@@ -517,10 +517,12 @@ impl<D: MerkleDB> ChainState<D> {
 
 #[cfg(test)]
 mod tests {
-    use crate::db::{FinDB, IterOrder, KVBatch, KValue, MerkleDB, TempFinDB, TempRocksDB};
+    use crate::db::{IterOrder, KVBatch, KValue, MerkleDB};
     use crate::state::{chain_state, ChainState};
+    use fin_db::FinDB;
     use rand::Rng;
     use std::thread;
+    use temp_db::{TempFinDB, TempRocksDB};
 
     const VER_WINDOW: u64 = 100;
 

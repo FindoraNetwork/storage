@@ -7,4 +7,4 @@ edition = "2021"
 [dependencies]
 ruc = "1.0"
 storage = { path = "../storage", version = "0.2" }
-fmerk = { path = "../fmerk" }
+fmerk = { path = "../fmerk", version = "0.2" }

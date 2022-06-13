@@ -103,8 +103,9 @@ impl Drop for TempRocksDB {
 
 #[cfg(test)]
 mod tests {
-    use crate::db::{IterOrder, MerkleDB, TempRocksDB};
+    use super::TempRocksDB;
     use std::thread;
+    use storage::db::{IterOrder, MerkleDB};
 
     #[test]
     fn db_put_n_get() {

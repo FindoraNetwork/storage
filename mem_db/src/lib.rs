@@ -172,6 +172,12 @@ impl MerkleDB for MemoryDB {
     }
 }
 
+impl Drop for MemoryDB {
+    fn drop(&mut self) {
+        self.destroy();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::MemoryDB;
@@ -462,6 +468,5 @@ mod tests {
             .map(|(k, v)| (k.to_vec(), v.to_vec()))
             .collect::<Vec<_>>();
         assert_eq!(expected_aux, actual_aux);
-        fdb.destroy();
     }
 }
