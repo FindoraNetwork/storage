@@ -1,9 +1,21 @@
-use fmerk::{rocksdb, to_batch, tree::Tree, Merk, Op};
+use fmerk::{rocksdb, tree::Tree, Merk, Op, BatchEntry};
 use ruc::*;
 use std::path::{Path, PathBuf};
 use storage::db::{IterOrder, KVBatch, KValue, MerkleDB};
 
 const CF_STATE: &str = "state";
+
+/// Converts KVEntry to BatchEntry
+pub fn to_batch<I: IntoIterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(items: I) -> Vec<BatchEntry> {
+    let mut batch = Vec::new();
+    for (key, val) in items {
+        match val {
+            Some(val) => batch.push((key, Op::Put(val))),
+            None => batch.push((key, Op::Delete)),
+        }
+    }
+    batch
+}
 
 /// Findora db
 

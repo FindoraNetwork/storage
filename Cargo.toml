@@ -1,7 +1,6 @@
 [workspace]
 members = [
  "storage",
- "fmerk",
  "fin_db",
  "mem_db",
  "temp_db",
