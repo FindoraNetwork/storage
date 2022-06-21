@@ -1,9 +1,10 @@
-use crate::db::{DBIter, IterOrder, KVBatch, KValue, MerkleDB, RocksDB};
+use fin_db::RocksDB;
 use ruc::*;
 use std::env::temp_dir;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::time::SystemTime;
+use storage::db::{IterOrder, KVBatch, KValue, MerkleDB};
 
 /// Wraps a RocksDB instance and deletes it from disk it once it goes out of scope.
 pub struct TempRocksDB {
@@ -38,10 +39,6 @@ impl MerkleDB for TempRocksDB {
         self.deref().root_hash()
     }
 
-    fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
-        self.deref_mut().put_batch(kvs)
-    }
-
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.deref().get(key)
     }
@@ -50,11 +47,25 @@ impl MerkleDB for TempRocksDB {
         self.deref().get(key)
     }
 
-    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+    fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
+        self.deref_mut().put_batch(kvs)
+    }
+
+    fn iter(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         self.deref().iter(lower, upper, order)
     }
 
-    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DBIter {
+    fn iter_aux(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+        order: IterOrder,
+    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         self.deref().iter(lower, upper, order)
     }
 
@@ -92,8 +103,9 @@ impl Drop for TempRocksDB {
 
 #[cfg(test)]
 mod tests {
-    use crate::db::{IterOrder, MerkleDB, TempRocksDB};
+    use super::TempRocksDB;
     use std::thread;
+    use storage::db::{IterOrder, MerkleDB};
 
     #[test]
     fn db_put_n_get() {

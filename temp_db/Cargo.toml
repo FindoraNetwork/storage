@@ -1,0 +1,11 @@
+[package]
+name = "temp_db"
+version = "0.2.0"
+authors = ["FindoraNetwork"]
+edition = "2021"
+
+[dependencies]
+ruc = "1.0"
+fmerk = "0.1"
+storage = { path = "../storage", version = "0.2" }
+fin_db = { path = "../fin_db", version = "0.2" }
