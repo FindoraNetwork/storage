@@ -16,18 +16,17 @@ The crate was designed to be the blockchain state database. It provides persiste
 **Example:**
 ```toml
 [dependencies]
-storage = { git = "ssh://git@github.com/FindoraNetwork/storage.git", branch = "master" }
-parking_lot = "0.11.1"
+storage = { git = "ssh://git@github.com/FindoraNetwork/storage.git", tag = "v0.2.0" }
+fin_db = { git = "ssh://git@github.com/FindoraNetwork/storage.git", tag = "v0.2.0" }
+parking_lot = "0.12"
 ```
 ```rust
-extern crate storage;
-use storage::state::{ChainState, State};
-use storage::db::FinDB;
-use storage::store::PrefixedStore;
+use storage::state::{ChainState, State, PrefixedStore};
+use storage::store::traits::{Stated, Store};
+use fin_db::FinDB;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::thread;
-use storage::store::traits::{Stated, Store};
 
 // This window is used to determine how many versions of each KV pair are to be kept in the
 // auxiliary db.
