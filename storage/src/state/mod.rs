@@ -146,6 +146,14 @@ impl<D: MerkleDB> State<D> {
         let mut cs = self.chain_state.write();
         //Get batch for current block
         let kv_batch = self.cache.commit();
+        for (k, v) in kv_batch.iter() {
+            let key = std::str::from_utf8(&k).unwrap();
+            if v.is_none() {
+                println!("committed: key: {}, value: None", key);
+            } else {
+                println!("committed: key: {}, value: Some", key);
+            }
+        }
         //Clear the cache from the current state
         self.cache = SessionedCache::new(self.cache.is_merkle());
 
