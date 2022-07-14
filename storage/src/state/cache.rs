@@ -226,9 +226,22 @@ impl SessionedCache {
         }
     }
 
-    /// rebases cur KVs onto base
+    /// rebases delta onto base
     fn rebase(&mut self) {
-        self.base.append(&mut self.delta);
+        for (k, v) in self.delta.iter_mut() {
+            // The DB may or may not (doesn't matter) have the key on disk.
+            // Remove the KV from base if base already contains it and delta wants to delete.
+            if v.is_none() {
+                if let Some(Some(_v)) = self.base.get(k) {
+                    self.base.remove(k);
+                    continue;
+                }
+            }
+            // merge whatever in delta to base otherwise
+            self.base.insert(k.clone(), v.take());
+        }
+
+        self.delta.clear();
     }
 
     /// checks key value ranges
@@ -637,11 +650,41 @@ mod tests {
         //Remove it again and commit
         cache.remove(b"k40");
         cache.commit();
-        assert_eq!(cache.get(b"k40"), Some(None));
+        assert_eq!(cache.get(b"k40"), None);
 
         //Remove a value that doesn't exist
         cache.remove(b"k50");
         assert_eq!(cache.get(b"k50"), None);
+    }
+
+    #[test]
+    fn test_rebase() {
+        // =======================Test case==========================
+        // [(k1, v1), (k2, v2), (k3, None), (k4, None)]  base
+        // [(k1, v11), (k2, None), (k3, v3), (k4, None)] delta
+        // [(k1, v11), (k3, v3), (k4, None)]             after rebase
+        // ==========================================================
+        let mut cache = SessionedCache::new(true);
+
+        //Put some date into cache
+        cache.put(b"k1", b"v1".to_vec());
+        cache.put(b"k2", b"v2".to_vec());
+        cache.delete(b"k3");
+        cache.delete(b"k4");
+        cache.rebase();
+
+        //Add some delta values and rebase
+        cache.put(b"k1", b"v11".to_vec());
+        cache.remove(b"k2");
+        cache.put(b"k3", b"v3".to_vec());
+        cache.delete(b"k4");
+        cache.rebase();
+
+        //Check
+        assert_eq!(cache.get(b"k1").unwrap(), Some(b"v11".to_vec()));
+        assert_eq!(cache.get(b"k2"), None);
+        assert_eq!(cache.get(b"k3").unwrap(), Some(b"v3".to_vec()));
+        assert_eq!(cache.get(b"k4"), Some(None));
     }
 
     #[test]
