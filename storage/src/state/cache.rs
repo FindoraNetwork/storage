@@ -21,6 +21,8 @@ impl<'a> Iterator for CacheIter<'a> {
     type Item = (&'a Vec<u8>, &'a Option<Vec<u8>>);
     fn next(&mut self) -> Option<Self::Item> {
         loop {
+            // Iterates self.base and then self.delta
+            // KVs that modified in self.delta or removed will be skipped when iterating self.base.
             if let Some(item) = self.iter.next() {
                 if !self.in_base // iterating delta
                     || (!self.cache.delta.contains_key(item.0)
@@ -29,6 +31,7 @@ impl<'a> Iterator for CacheIter<'a> {
                     break Some(item);
                 }
             } else if self.in_base {
+                // switch to delta when base finish
                 self.in_base = false;
                 self.iter = self.cache.delta.iter();
             } else {
@@ -79,7 +82,7 @@ impl SessionedCache {
         self.removed.remove(key);
     }
 
-    /// Remove Key from cur
+    /// Remove Key from delta and mark it removed
     ///
     /// key may still exist in base after removal
     pub fn remove(&mut self, key: &[u8]) {
