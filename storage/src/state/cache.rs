@@ -237,6 +237,7 @@ impl SessionedCache {
             if v.is_none() {
                 if let Some(Some(_v)) = self.base.get(k) {
                     self.base.remove(k);
+                    continue;
                 }
             }
             // merge whatever in delta to base otherwise
@@ -652,7 +653,7 @@ mod tests {
         //Remove it again and commit
         cache.remove(b"k40");
         cache.commit();
-        assert_eq!(cache.get(b"k40"), Some(None));
+        assert_eq!(cache.get(b"k40"), None);
 
         //Remove a value that doesn't exist
         cache.remove(b"k50");
