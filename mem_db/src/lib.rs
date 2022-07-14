@@ -55,6 +55,12 @@ impl MemoryDB {
     }
 }
 
+impl Default for MemoryDB {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MerkleDB for MemoryDB {
     fn root_hash(&self) -> Vec<u8> {
         vec![]
@@ -91,24 +97,12 @@ impl MerkleDB for MemoryDB {
             IterOrder::Asc => Box::new(
                 self.inner
                     .range::<Box<[u8]>, _>((Included(&lower), Excluded(&upper)))
-                    .filter_map(|(k, v)| {
-                        if let Some(v) = v {
-                            Some((k.clone(), v.clone()))
-                        } else {
-                            None
-                        }
-                    }),
+                    .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.clone()))),
             ),
             IterOrder::Desc => Box::new(
                 self.inner
                     .range::<Box<[u8]>, _>((Included(&lower), Excluded(&upper)))
-                    .filter_map(|(k, v)| {
-                        if let Some(v) = v {
-                            Some((k.clone(), v.clone()))
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.clone())))
                     .rev(),
             ),
         }
@@ -127,24 +121,12 @@ impl MerkleDB for MemoryDB {
             IterOrder::Asc => Box::new(
                 self.aux
                     .range::<Box<[u8]>, _>((Included(&lower), Excluded(&upper)))
-                    .filter_map(|(k, v)| {
-                        if let Some(v) = v {
-                            Some((k.clone(), v.clone()))
-                        } else {
-                            None
-                        }
-                    }),
+                    .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.clone()))),
             ),
             IterOrder::Desc => Box::new(
                 self.aux
                     .range::<Box<[u8]>, _>((Included(&lower), Excluded(&upper)))
-                    .filter_map(|(k, v)| {
-                        if let Some(v) = v {
-                            Some((k.clone(), v.clone()))
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.clone())))
                     .rev(),
             ),
         }
