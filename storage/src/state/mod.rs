@@ -147,11 +147,16 @@ impl<D: MerkleDB> State<D> {
         //Get batch for current block
         let kv_batch = self.cache.commit();
         for (k, v) in kv_batch.iter() {
+            let db_exist;
+            match cs.get(k).c(d!())? {
+                Some(_) => db_exist = true,
+                None => db_exist = false,
+            }
             let key = std::str::from_utf8(&k).unwrap();
             if v.is_none() {
-                println!("committed: key: {}, value: None", key);
+                println!("committed: key: {}, value: None, exist: {}", key, db_exist);
             } else {
-                println!("committed: key: {}, value: Some", key);
+                println!("committed: key: {}, value: Some, exist: {}", key, db_exist);
             }
         }
         //Clear the cache from the current state
