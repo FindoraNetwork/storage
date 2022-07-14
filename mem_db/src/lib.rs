@@ -5,7 +5,7 @@ use std::env::temp_dir;
 use std::ops::Bound::{Excluded, Included};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use storage::db::{IterOrder, KVBatch, KValue, MerkleDB};
+use storage::db::{DbIter, IterOrder, KVBatch, KValue, MerkleDB};
 
 /// Wraps a Findora db instance and deletes it from disk it once it goes out of scope.
 #[derive(Serialize, Deserialize)]
@@ -84,12 +84,7 @@ impl MerkleDB for MemoryDB {
         Ok(())
     }
 
-    fn iter(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         let lower = lower.to_vec().into_boxed_slice();
         let upper = upper.to_vec().into_boxed_slice();
 
@@ -108,12 +103,7 @@ impl MerkleDB for MemoryDB {
         }
     }
 
-    fn iter_aux(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         let lower = lower.to_vec().into_boxed_slice();
         let upper = upper.to_vec().into_boxed_slice();
 
