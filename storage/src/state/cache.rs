@@ -226,9 +226,24 @@ impl SessionedCache {
         }
     }
 
-    /// rebases cur KVs onto base
+    /// rebases delta onto base. eg.
+    /// [(k1, v1), (k2, v2), (k3, None)]             base
+    /// [(k1, v11), (k2, None), (k3, None) (k4, k4)] delta
+    /// [(k1, v11), (k3, None), (k4, k4)]            after rebase
     fn rebase(&mut self) {
-        self.base.append(&mut self.delta);
+        for (k, v) in self.delta.iter_mut() {
+            // The DB may or may not have this key on disk, we don't know.
+            // Remove the entry from base if base already contains (k, Some(_v)) and delta wants to delete it.
+            if v.is_none() {
+                if let Some(Some(_v)) = self.base.get(k) {
+                    self.base.remove(k);
+                }
+            }
+            // merge whatever in delta to base otherwise
+            self.base.insert(k.clone(), v.take());
+        }
+
+        self.delta.clear();
     }
 
     /// checks key value ranges
