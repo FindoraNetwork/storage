@@ -228,20 +228,7 @@ impl SessionedCache {
 
     /// rebases delta onto base
     fn rebase(&mut self) {
-        for (k, v) in self.delta.iter_mut() {
-            // The DB may or may not (doesn't matter) have the key on disk.
-            // Remove the KV from base if base already contains it and delta wants to delete.
-            if v.is_none() {
-                if let Some(Some(_v)) = self.base.get(k) {
-                    self.base.remove(k);
-                    continue;
-                }
-            }
-            // merge whatever in delta to base otherwise
-            self.base.insert(k.clone(), v.take());
-        }
-
-        self.delta.clear();
+        self.base.append(&mut self.delta);
     }
 
     /// checks key value ranges
