@@ -76,13 +76,9 @@ impl SessionedCache {
     ///
     /// key may still exist in base after removal
     pub fn remove(&mut self, key: &[u8]) {
-        // exist in delta
-        if let Some(Some(_)) = self.delta.get(key) {
-            self.delta.remove(key);
-        } else if let Some(Some(_)) = self.base.get(key) {
-            // exist only in base
-            self.delta.insert(key.to_owned(), None);
-        }
+        // remove from delta and base.
+        self.delta.remove(key);
+        self.base.remove(key);
     }
 
     /// commits pending KVs in session
