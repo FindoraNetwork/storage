@@ -44,6 +44,7 @@ impl<'a> Iterator for CacheIter<'a> {
 #[derive(Clone)]
 pub struct SessionedCache {
     delta: KVMap,
+    deleted: Vec<Vec<u8>>,
     base: KVMap,
     is_merkle: bool,
 }
@@ -54,6 +55,7 @@ impl SessionedCache {
         SessionedCache {
             delta: KVMap::new(),
             base: KVMap::new(),
+            deleted: Vec::new(),
             is_merkle,
         }
     }
@@ -70,15 +72,19 @@ impl SessionedCache {
     /// delete key-pair (when it EXIST in db) by marking as None
     pub fn delete(&mut self, key: &[u8]) {
         self.delta.insert(key.to_owned(), None);
+        self.deleted.push(key.to_owned());
     }
 
     /// Remove key-pair (when NOT EXIST in db) from cache
     ///
     /// key may still exist in base after removal
     pub fn remove(&mut self, key: &[u8]) {
-        // remove from delta and base.
-        self.delta.remove(key);
-        self.base.remove(key);
+        // check if in the base.
+        if self.base.contains_key(key) {
+            self.delta.insert(key.to_owned(), None);
+        } else {
+            self.delta.remove(key);
+        }
     }
 
     /// commits pending KVs in session
@@ -222,9 +228,34 @@ impl SessionedCache {
         }
     }
 
-    /// rebases cur KVs onto base
+    /// rebases cur KVs onto base. eg.
+    /// [(k1, v1), (k2, v2), (k3, None)]             base
+    /// [(k1, v11), (k2, None), (k3, None) (k4, k4)] delta
+    /// [(k1, v11), (k3, None), (k4, k4)]            after base
     fn rebase(&mut self) {
-        self.base.append(&mut self.delta);
+        // update deleted to base.
+        loop {
+            if let Some(k) = self.deleted.pop() {
+                self.base.insert(k, None);
+            } else {
+                break;
+            }
+        }
+
+        let keys: Vec<_> = self.delta.keys().cloned().collect();
+        for k in keys {
+            if let Some(v) = self.delta.remove(&k) {
+                if v.is_none() {
+                    if let Some(vv) = self.base.get(&k) {
+                        if vv.is_some() {
+                            self.base.remove(&k);
+                        }
+                        continue;
+                    }
+                }
+                self.base.insert(k, v);
+            }
+        }
     }
 
     /// checks key value ranges
@@ -617,27 +648,28 @@ mod tests {
         let mut cache = SessionedCache::new(true);
 
         //Put some date into cache
-        cache.put(b"k40", b"v40".to_vec());
-        cache.put(b"k30", b"v30".to_vec());
-        cache.put(b"k20", b"v20".to_vec());
+        cache.put(b"k1", b"v1".to_vec());
+        cache.put(b"k2", b"v2".to_vec());
+        cache.put(b"k3", b"v3".to_vec());
         cache.commit();
 
         //Remove one of the values
-        cache.remove(b"k40");
-        assert_eq!(cache.get(b"k40"), Some(None));
+        cache.remove(b"k3");
+        assert_eq!(cache.get(b"k3"), Some(None));
+        cache.commit();
+        assert_eq!(cache.get(b"k3"), None);
+
+        //Remove one of the values
+        cache.remove(b"k2");
+        assert_eq!(cache.get(b"k2"), Some(None));
 
         //Roll back above removal
         cache.discard();
-        assert_eq!(cache.get(b"k40").unwrap(), Some(b"v40".to_vec()));
-
-        //Remove it again and commit
-        cache.remove(b"k40");
-        cache.commit();
-        assert_eq!(cache.get(b"k40"), Some(None));
+        assert_eq!(cache.get(b"k2").unwrap(), Some(b"v2".to_vec()));
 
         //Remove a value that doesn't exist
-        cache.remove(b"k50");
-        assert_eq!(cache.get(b"k50"), None);
+        cache.remove(b"k4");
+        assert_eq!(cache.get(b"k4"), None);
     }
 
     #[test]
