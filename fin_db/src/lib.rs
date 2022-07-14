@@ -67,7 +67,7 @@ impl MerkleDB for FinDB {
         let batch = to_batch(kvs);
         self.db
             .apply(batch.as_ref())
-            .map_err(|_| eg!("Failed to put batch data to db"))
+            .map_err(|e| eg!("Failed to put batch data to db: {}", e.to_string()))
     }
 
     /// Gets range iterator
@@ -251,14 +251,8 @@ impl MerkleDB for RocksDB {
         readopts.set_iterate_lower_bound(lower.to_vec());
         readopts.set_iterate_upper_bound(upper.to_vec());
         match order {
-            IterOrder::Asc => Box::new(
-                self.iter_opt(rocksdb::IteratorMode::Start, readopts)
-                    .into_iter(),
-            ),
-            IterOrder::Desc => Box::new(
-                self.iter_opt(rocksdb::IteratorMode::End, readopts)
-                    .into_iter(),
-            ),
+            IterOrder::Asc => Box::new(self.iter_opt(rocksdb::IteratorMode::Start, readopts)),
+            IterOrder::Desc => Box::new(self.iter_opt(rocksdb::IteratorMode::End, readopts)),
         }
     }
 
