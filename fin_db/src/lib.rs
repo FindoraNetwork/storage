@@ -1,7 +1,7 @@
 use fmerk::{rocksdb, tree::Tree, BatchEntry, Merk, Op};
 use ruc::*;
 use std::path::{Path, PathBuf};
-use storage::db::{IterOrder, KVBatch, KValue, MerkleDB};
+use storage::db::{DbIter, IterOrder, KVBatch, KValue, MerkleDB};
 
 const CF_STATE: &str = "state";
 
@@ -71,12 +71,7 @@ impl MerkleDB for FinDB {
     }
 
     /// Gets range iterator
-    fn iter(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         let mut readopts = rocksdb::ReadOptions::default();
         readopts.set_iterate_lower_bound(lower.to_vec());
         readopts.set_iterate_upper_bound(upper.to_vec());
@@ -87,12 +82,7 @@ impl MerkleDB for FinDB {
     }
 
     /// Gets range iterator for aux
-    fn iter_aux(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         let mut readopts = rocksdb::ReadOptions::default();
         readopts.set_iterate_lower_bound(lower.to_vec());
         readopts.set_iterate_upper_bound(upper.to_vec());
@@ -241,12 +231,7 @@ impl MerkleDB for RocksDB {
     }
 
     /// Gets range iterator
-    fn iter(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         let mut readopts = rocksdb::ReadOptions::default();
         readopts.set_iterate_lower_bound(lower.to_vec());
         readopts.set_iterate_upper_bound(upper.to_vec());
@@ -257,12 +242,7 @@ impl MerkleDB for RocksDB {
     }
 
     /// Gets range iterator for aux
-    fn iter_aux(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         self.iter(lower, upper, order)
     }
 
