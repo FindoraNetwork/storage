@@ -102,23 +102,8 @@ impl<D: MerkleDB> State<D> {
     }
 
     /// Deletes a key from the State.
-    ///
-    /// The deletion of a key is represented by setting the value to None for a given key.
-    ///
-    /// When attempting to delete a key that doesn't exist in the ChainState, the MerkleDB
-    /// will panic.
-    ///
-    /// To avoid this case, the ChainState is first queried for the key. If the key is found,
-    /// the deletion proceeds as usual. If it isn't found in the ChainState but exists in the
-    /// cache, then the key value record will be removed from the cache.
     pub fn delete(&mut self, key: &[u8]) -> Result<()> {
-        let cs = self.chain_state.read();
-        match cs.get(key).c(d!())? {
-            //Mark key as deleted
-            Some(_) => self.cache.delete(key),
-            //Remove key from cache
-            None => self.cache.remove(key),
-        }
+        self.cache.delete(key);
         Ok(())
     }
 
@@ -145,16 +130,12 @@ impl<D: MerkleDB> State<D> {
     pub fn commit(&mut self, height: u64) -> Result<(Vec<u8>, u64)> {
         let mut cs = self.chain_state.write();
 
-        //Get batch for current block and polish to avoid panic in DB
+        //Get batch for current block and remove uncessary DELETE.
+        //Note: DB will panic if it doesn't contain the key being deleted.
         let mut kv_batch = self.cache.commit();
         kv_batch.retain(|(k, v)| match cs.exists(k).unwrap() {
             true => true,
-            false => {
-                if v.is_none() {
-                    println!("WARNING: trying to delete a key that doesn't exist in DB!!!");
-                }
-                v.is_some()
-            }
+            false => v.is_some(),
         });
 
         //Clear the cache from the current state
