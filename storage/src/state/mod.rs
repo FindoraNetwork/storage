@@ -144,8 +144,19 @@ impl<D: MerkleDB> State<D> {
     /// The cache gets persisted to the MerkleDB and then cleared
     pub fn commit(&mut self, height: u64) -> Result<(Vec<u8>, u64)> {
         let mut cs = self.chain_state.write();
-        //Get batch for current block
-        let kv_batch = self.cache.commit();
+
+        //Get batch for current block and polish to avoid panic in DB
+        let mut kv_batch = self.cache.commit();
+        kv_batch.retain(|(k, v)| match cs.exists(k).unwrap() {
+            true => true,
+            false => {
+                if v.is_none() {
+                    println!("WARNING: trying to delete a key that doesn't exist in DB!!!");
+                }
+                v.is_some()
+            }
+        });
+
         //Clear the cache from the current state
         self.cache = SessionedCache::new(self.cache.is_merkle());
 
