@@ -1,4 +1,4 @@
-use fmerk::{rocksdb, tree::Tree, Merk, Op, BatchEntry};
+use fmerk::{rocksdb, tree::Tree, BatchEntry, Merk, Op};
 use ruc::*;
 use std::path::{Path, PathBuf};
 use storage::db::{IterOrder, KVBatch, KValue, MerkleDB};
