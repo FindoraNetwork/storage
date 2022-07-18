@@ -28,17 +28,14 @@ impl<'a> Iterator for CacheIter<'a> {
                 if !self.cache.exists_since(item.0, self.layer + 1) {
                     break Some(item);
                 }
-            } else if self.layer < max {
+            } else if self.layer < max - 1 {
                 // switch to next layer on stack if have any
                 // unwrap here is safe
-                self.iter = self
-                    .cache
-                    .stack
-                    .get(self.layer)
-                    .expect("missing stack?")
-                    .iter();
+                let msg = format!("missing stack? {}/{}", self.layer, max);
+                let msg = msg.as_str();
+                self.iter = self.cache.stack.get(self.layer).expect(msg).iter();
                 self.layer += 1;
-            } else if self.layer == max {
+            } else if self.layer == max - 1 {
                 // switch to last layer
                 self.iter = self.cache.delta.iter();
                 self.layer += 1;
