@@ -45,6 +45,7 @@ impl<'a> Iterator for CacheIter<'a> {
 pub struct SessionedCache {
     delta: KVMap,
     base: KVMap,
+    stack: Vec<KVMap>,
     is_merkle: bool,
 }
 
@@ -54,8 +55,29 @@ impl SessionedCache {
         SessionedCache {
             delta: KVMap::new(),
             base: KVMap::new(),
+            stack: vec![],
             is_merkle,
         }
+    }
+
+    pub fn stack_push(mut self) -> Self {
+        self.stack.push(std::mem::take(&mut self.delta));
+        self
+    }
+
+    pub fn stack_discard(mut self) -> Self {
+        if let Some(delta) = self.stack.pop() {
+            self.delta = delta;
+        }
+        self
+    }
+
+    pub fn stack_commit(mut self) -> Self {
+        if let Some(mut delta) = self.stack.pop() {
+            delta.append(&mut self.delta);
+            self.delta = delta;
+        }
+        self
     }
 
     /// put/update value by key
@@ -74,21 +96,31 @@ impl SessionedCache {
     }
 
     /// commits pending KVs in session
-    pub fn commit(&mut self) -> KVBatch {
+    pub fn commit(&mut self) -> Result<KVBatch, String> {
+        // Don't commit in no-empty-stack context
+        if !self.stack.is_empty() {
+            return Err("No empty stack".to_string());
+        }
         // Merge delta into the base version
         self.rebase();
 
         // Return updated values
-        self.values()
+        Ok(self.values())
     }
 
     /// commits pending KVs in session without return them
-    pub fn commit_only(&mut self) {
+    pub fn commit_only(&mut self) -> Result<(), String> {
+        // Don't commit in no-empty-stack context
+        if !self.stack.is_empty() {
+            return Err("No empty stack".to_string());
+        }
         // Merge delta into the base version
         self.rebase();
+
+        Ok(())
     }
 
-    /// discards pending KVs in session
+    /// discards pending KVs in session since last stack-pushing
     ///
     /// rollback to base
     pub fn discard(&mut self) {
@@ -215,6 +247,7 @@ impl SessionedCache {
     }
 
     /// rebases delta onto base
+    /// make sure stack is empty before calling me
     fn rebase(&mut self) {
         self.base.append(&mut self.delta);
     }
@@ -375,7 +408,7 @@ mod tests {
         // put data and commit
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
-        cache.commit();
+        cache.commit().unwrap();
 
         // verify touched() flag
         assert!(cache.touched(b"k10"));
@@ -409,7 +442,7 @@ mod tests {
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
         cache.put(b"k30", b"v30".to_vec());
-        cache.commit();
+        cache.commit().unwrap();
 
         // put/delete data again
         cache.put(b"k10", b"v11".to_vec());
@@ -466,7 +499,7 @@ mod tests {
         // put data and commit
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
-        cache.commit();
+        cache.commit().unwrap();
 
         // put/delete data again
         cache.put(b"k10", b"v11".to_vec());
@@ -570,7 +603,7 @@ mod tests {
         cache.put(b"k30", b"v30".to_vec());
         cache.put(b"k20", b"v20".to_vec());
         cache.delete(b"k10");
-        cache.commit();
+        cache.commit().unwrap();
 
         // put/delete data again
         cache.put(b"k10", b"v11".to_vec());
