@@ -13,7 +13,7 @@ const MAX_MERK_VAL_LEN: u16 = u16::MAX;
 /// cache iterator
 pub struct CacheIter<'a> {
     cache: &'a SessionedCache,
-    layer: usize,
+    layer: usize, // base is layer 0, delta is the last layer
     iter: std::collections::btree_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>,
 }
 
@@ -29,14 +29,14 @@ impl<'a> Iterator for CacheIter<'a> {
                     break Some(item);
                 }
             } else if self.layer < max - 1 {
-                // switch to next layer on stack if have any
-                // unwrap here is safe
+                // switch to next layer on stack
                 let msg = format!("missing stack? {}/{}", self.layer, max);
                 let msg = msg.as_str();
+                // `expect` in here is safe unless something is very wrong when panic should be a better choice
                 self.iter = self.cache.stack.get(self.layer).expect(msg).iter();
                 self.layer += 1;
             } else if self.layer == max - 1 {
-                // switch to last layer
+                // switch to self.delta, the last layer
                 self.iter = self.cache.delta.iter();
                 self.layer += 1;
             } else {
@@ -66,28 +66,29 @@ impl SessionedCache {
         }
     }
 
-    pub fn stack_push(mut self) -> Self {
+    pub fn stack_push(&mut self) {
         // self.delta is cleared and its data is pushed to self.stack
         self.stack.push(std::mem::take(&mut self.delta));
-        self
     }
 
-    pub fn stack_discard(mut self) -> Self {
-        // self.delta is dropped and restored from stack head
+    pub fn stack_discard(&mut self) {
+        // self.delta is dropped and restored from stack head if the stack is not empty
         if let Some(delta) = self.stack.pop() {
             self.delta = delta;
+        } else if !self.delta.is_empty() {
+            self.delta = Default::default();
+        } else {
+            //TODO: if we need return an error?
         }
-        self
     }
 
-    pub fn stack_commit(mut self) -> Self {
+    pub fn stack_commit(&mut self) {
         // Newest update stored in self.delta is merged to stack head,
         // then replace self.delta by stack head
         if let Some(mut delta) = self.stack.pop() {
             delta.append(&mut self.delta);
             self.delta = delta;
         }
-        self
     }
 
     /// put/update value by key
@@ -149,6 +150,7 @@ impl SessionedCache {
         self.delta.contains_key(key) || touched_on_stack() || self.base.contains_key(key)
     }
 
+    // `since` is included
     pub fn exists_since(&self, key: &[u8], since: usize) -> bool {
         let max = self.stack.len() + 1;
 
@@ -159,8 +161,12 @@ impl SessionedCache {
             if since == max {
                 return in_delta;
             }
-            let on_stack_or_in_delta =
-                in_delta || self.stack.iter().rev().any(|delta| delta.contains_key(key));
+            let on_stack_or_in_delta = in_delta
+                || self
+                    .stack
+                    .iter()
+                    .skip(if since > 0 { since - 1 } else { 0 })
+                    .any(|delta| delta.contains_key(key));
             if since > 0 {
                 return on_stack_or_in_delta;
             }
@@ -384,6 +390,9 @@ mod tests {
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
 
+        // stack_push should not effect `get`, `keys`, `hasv` interface
+        cache.stack_push();
+
         // verify touched() flag
         assert!(cache.touched(b"k10"));
         assert!(cache.touched(b"k20"));
@@ -392,8 +401,12 @@ mod tests {
         assert!(!cache.deleted(b"k10"));
         assert!(!cache.deleted(b"k20"));
 
+        cache.stack_push();
+
         // verify keys
         assert_eq!(cache.keys(), vec![b"k10".to_vec(), b"k20".to_vec()]);
+
+        cache.stack_push();
 
         // verify hasv() flag
         assert!(cache.hasv(b"k10"));
@@ -402,6 +415,8 @@ mod tests {
         // getv and compare
         assert_eq!(cache.getv(b"k10").unwrap(), b"v10".to_vec());
         assert_eq!(cache.getv(b"k20").unwrap(), b"v20".to_vec());
+
+        cache.stack_push();
 
         // get and compare
         assert_eq!(cache.get(b"k10").unwrap().unwrap(), b"v10".to_vec());
@@ -415,6 +430,8 @@ mod tests {
         // put data
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
+
+        cache.stack_push();
 
         // update data
         cache.put(b"k10", b"v11".to_vec());
@@ -452,9 +469,13 @@ mod tests {
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
 
+        cache.stack_push();
+
         // delete data
         cache.delete(b"k10");
         cache.delete(b"k20");
+
+        cache.stack_push();
 
         // verify touched() flag
         assert!(cache.touched(b"k10"));
@@ -484,9 +505,13 @@ mod tests {
     fn cache_put_n_commit() {
         let mut cache = SessionedCache::new(true);
 
+        cache.stack_push();
+
         // put data and commit
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
+
+        cache.stack_commit();
         cache.commit().unwrap();
 
         // verify touched() flag
@@ -779,5 +804,311 @@ mod tests {
             .collect();
 
         assert_eq!(values, expected);
+    }
+    #[test]
+    fn cache_stack_push() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"test_key_0", b"test_value_0".to_vec());
+        cache.put(b"test_key_1", b"test_value_1".to_vec());
+
+        cache.stack_push();
+
+        cache.put(b"test_key_2", b"test_value_2".to_vec());
+        cache.put(b"test_key_3", b"test_value_3".to_vec());
+
+        cache.stack_push();
+
+        cache.delete(b"test_key_1");
+
+        cache.stack_push();
+
+        cache.put(b"test_key_2", b"value_2".to_vec());
+
+        let expected = vec![
+            (b"test_key_0".to_vec(), Some(b"test_value_0".to_vec())),
+            (b"test_key_3".to_vec(), Some(b"test_value_3".to_vec())),
+            (b"test_key_1".to_vec(), None),
+            (b"test_key_2".to_vec(), Some(b"value_2".to_vec())),
+        ];
+
+        let values = cache
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(expected, values);
+    }
+
+    #[test]
+    fn cache_stack_discard() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"test_key_0", b"test_value_0".to_vec());
+        cache.put(b"test_key_1", b"test_value_1".to_vec());
+
+        cache.stack_push();
+
+        cache.delete(b"test_key_1");
+        cache.put(b"test_key_2", b"test_value_2".to_vec());
+
+        assert_eq!(cache.getv(b"test_key_0"), Some(b"test_value_0".to_vec()));
+        assert_eq!(cache.getv(b"test_key_1"), None);
+        assert_eq!(cache.getv(b"test_key_2"), Some(b"test_value_2".to_vec()));
+
+        assert!(cache.commit().is_err());
+
+        cache.stack_discard();
+
+        assert_eq!(cache.getv(b"test_key_0"), Some(b"test_value_0".to_vec()));
+        assert_eq!(cache.getv(b"test_key_1"), Some(b"test_value_1".to_vec()));
+        assert_eq!(cache.getv(b"test_key_2"), None);
+
+        assert!(cache.commit().is_ok());
+    }
+
+    #[test]
+    fn cache_stack_commit() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.stack_push();
+
+        cache.put(b"test_key_0", b"test_value_0".to_vec());
+        cache.put(b"test_key_1", b"test_value_1".to_vec());
+        cache.delete(b"test_key_2");
+
+        // all stack should be committed or discarded before calling cache.commit
+        assert!(cache.commit().is_err());
+        assert!(cache.commit_only().is_err());
+
+        cache.stack_commit();
+        // All key-values are stored in self.delta now,
+        // we need commit the cache to rebase the cache
+        cache.commit().unwrap();
+
+        assert_eq!(cache.getv(b"test_key_0"), Some(b"test_value_0".to_vec()));
+        assert_eq!(cache.getv(b"test_key_1"), Some(b"test_value_1".to_vec()));
+        assert_eq!(cache.getv(b"test_key_2"), None);
+
+        // Will not effect key-values before stack_commit
+        cache.stack_discard();
+
+        let expected = vec![
+            (b"test_key_0".to_vec(), Some(b"test_value_0".to_vec())),
+            (b"test_key_1".to_vec(), Some(b"test_value_1".to_vec())),
+            (b"test_key_2".to_vec(), None),
+        ];
+
+        let kvs = cache
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(expected, kvs);
+
+        assert!(cache.commit().is_ok());
+    }
+
+    #[test]
+    fn cache_exist_since() {
+        let mut cache = SessionedCache::new(true);
+
+        // store in same layer self.delta, layer 1
+        cache.put(b"key0", b"value0".to_vec());
+        cache.put(b"key1", b"value1".to_vec());
+        cache.put(b"key2", b"value2".to_vec());
+
+        assert!(cache.exists_since(b"key0", 0));
+        assert!(cache.exists_since(b"key1", 1));
+        assert!(!cache.exists_since(b"key2", 2));
+
+        cache.stack_push();
+
+        // store in self.stack[0]
+        // self.delta is layer 2 now, and it's empty
+        assert!(cache.exists_since(b"key0", 0));
+        assert!(cache.exists_since(b"key1", 1));
+        assert!(!cache.exists_since(b"key2", 2));
+
+        // store in self.delta, layer 1
+        cache.stack_commit();
+        // store in self.base, layer 0
+        cache.commit_only().unwrap();
+
+        assert!(cache.exists_since(b"key0", 0));
+        assert!(!cache.exists_since(b"key1", 1));
+        assert!(!cache.exists_since(b"key2", 2));
+    }
+
+    // Case 1: A(commit)------------------>B(commit)---------------------------C(commit)
+    // Expected behavior: commit A+B+C
+    #[test]
+    fn cache_nested_stack_commit_discard_case1() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"key0", b"value0".to_vec());
+        cache.put(b"key1", b"value1".to_vec());
+
+        {
+            cache.stack_push();
+            cache.put(b"key0", b"another_value0".to_vec());
+            {
+                cache.stack_push();
+                cache.delete(b"key1");
+                cache.stack_commit();
+            }
+            cache.stack_commit();
+        }
+
+        cache.stack_commit();
+
+        assert_eq!(cache.getv(b"key0"), Some(b"another_value0".to_vec()));
+        assert_eq!(cache.getv(b"key1"), None);
+    }
+    // Case 2: A(commit)------------------>B(commit)---------------------------C(revert/discard)
+    // Expected behavior: commit A+B
+    #[test]
+    fn cache_nested_stack_commit_discard_case2() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"key0", b"value0".to_vec());
+        cache.put(b"key1", b"value1".to_vec());
+        {
+            cache.stack_push();
+            cache.put(b"key0", b"another_value0".to_vec());
+            {
+                cache.stack_push();
+                cache.delete(b"key1");
+                cache.stack_discard();
+            }
+            cache.stack_commit();
+        }
+
+        cache.stack_commit();
+
+        assert_eq!(cache.getv(b"key0"), Some(b"another_value0".to_vec()));
+        assert_eq!(cache.getv(b"key1"), Some(b"value1".to_vec()));
+    }
+
+    // Case 3: A(commit)----------------->B(revert/discard)-------------------C(commit/revert/discard)
+    // Expected behavior: commit A
+    #[test]
+    fn cache_nested_stack_commit_discard_case3() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"key0", b"value0".to_vec());
+        cache.put(b"key1", b"value1".to_vec());
+
+        {
+            cache.stack_push();
+            cache.put(b"key0", b"another_value0".to_vec());
+            {
+                cache.stack_push();
+                cache.delete(b"key1");
+                cache.stack_discard();
+
+                cache.stack_push();
+                cache.put(b"key2", b"value2".to_vec());
+                cache.stack_commit();
+            }
+            cache.stack_discard();
+        }
+
+        cache.stack_commit();
+
+        assert_eq!(cache.getv(b"key0"), Some(b"value0".to_vec()));
+        assert_eq!(cache.getv(b"key1"), Some(b"value1".to_vec()));
+        assert_eq!(cache.getv(b"key2"), None);
+        assert!(!cache.touched(b"key2"));
+    }
+
+    // Case 4: A(revert/discard)-------->B(commit/revert/discard)---------C(commit/revert/discard)
+    // Expected behavior: commit nothing
+    #[test]
+    fn cache_nested_stack_commit_discard_case4() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"key0", b"value0".to_vec());
+        cache.put(b"key1", b"value1".to_vec());
+        {
+            cache.stack_push();
+            cache.put(b"key0", b"another_value0".to_vec());
+            {
+                cache.stack_push();
+                cache.delete(b"key1");
+                cache.stack_discard();
+
+                cache.stack_push();
+                cache.put(b"key2", b"value2".to_vec());
+                cache.stack_commit();
+            }
+            cache.stack_discard();
+        }
+        {
+            cache.stack_push();
+            cache.put(b"key0", b"another_value0".to_vec());
+            {
+                cache.stack_push();
+                cache.delete(b"key1");
+                cache.stack_discard();
+
+                cache.stack_push();
+                cache.put(b"key3", b"value3".to_vec());
+                cache.stack_commit();
+            }
+            cache.stack_commit();
+        }
+
+        cache.stack_discard();
+
+        assert!(!cache.touched(b"key0"));
+        assert!(!cache.touched(b"key1"));
+        assert!(!cache.touched(b"key2"));
+    }
+    #[test]
+    fn cache_nested_stack_commit_discard() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"key0", b"value0".to_vec());
+        cache.put(b"key1", b"value1".to_vec());
+
+        // nested commit in discard
+        {
+            cache.stack_push();
+            cache.put(b"key7", b"value7".to_vec());
+            {
+                cache.stack_push();
+                cache.put(b"key8", b"value8".to_vec());
+                cache.delete(b"key0");
+                cache.stack_commit();
+                assert_eq!(cache.getv(b"key8"), Some(b"value8".to_vec()));
+                assert_eq!(cache.getv(b"key0"), None);
+            }
+            cache.stack_discard();
+
+            assert_eq!(cache.getv(b"key0"), Some(b"value0".to_vec()));
+            assert_eq!(cache.getv(b"key1"), Some(b"value1".to_vec()));
+            assert_eq!(cache.getv(b"key7"), None);
+            assert_eq!(cache.getv(b"key8"), None);
+        }
+
+        // nested discard in commit
+        {
+            cache.stack_push();
+            cache.put(b"key2", b"value2".to_vec());
+
+            {
+                cache.stack_push();
+                cache.delete(b"key0");
+                cache.put(b"key1", b"another_value1".to_vec());
+                cache.put(b"key2", b"another_value2".to_vec());
+                cache.stack_discard();
+            }
+
+            cache.stack_commit();
+            assert_eq!(cache.getv(b"key0"), Some(b"value0".to_vec()));
+            assert_eq!(cache.getv(b"key1"), Some(b"value1".to_vec()));
+            assert_eq!(cache.getv(b"key2"), Some(b"value2".to_vec()));
+        }
     }
 }
