@@ -13,26 +13,35 @@ const MAX_MERK_VAL_LEN: u16 = u16::MAX;
 /// cache iterator
 pub struct CacheIter<'a> {
     cache: &'a SessionedCache,
-    in_base: bool,
+    layer: usize,
     iter: std::collections::btree_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>,
 }
 
 impl<'a> Iterator for CacheIter<'a> {
     type Item = (&'a Vec<u8>, &'a Option<Vec<u8>>);
     fn next(&mut self) -> Option<Self::Item> {
+        let max = self.cache.stack.len() + 1;
         loop {
-            // Iterates self.base and then self.delta
-            // KVs that modified in self.delta will be skipped when iterating self.base.
+            // Iterates self.base, then self.stack, and self.delta
+            // KVs that modified later will be skipped when iterating.
             if let Some(item) = self.iter.next() {
-                if !self.in_base // iterating delta
-                    || !self.cache.delta.contains_key(item.0)
-                {
+                if !self.cache.exists_since(item.0, self.layer + 1) {
                     break Some(item);
                 }
-            } else if self.in_base {
-                // switch to delta when base finish
-                self.in_base = false;
+            } else if self.layer < max {
+                // switch to next layer on stack if have any
+                // unwrap here is safe
+                self.iter = self
+                    .cache
+                    .stack
+                    .get(self.layer)
+                    .expect("missing stack?")
+                    .iter();
+                self.layer += 1;
+            } else if self.layer == max {
+                // switch to last layer
                 self.iter = self.cache.delta.iter();
+                self.layer += 1;
             } else {
                 break None;
             }
@@ -61,11 +70,13 @@ impl SessionedCache {
     }
 
     pub fn stack_push(mut self) -> Self {
+        // self.delta is cleared and its data is pushed to self.stack
         self.stack.push(std::mem::take(&mut self.delta));
         self
     }
 
     pub fn stack_discard(mut self) -> Self {
+        // self.delta is dropped and restored from stack head
         if let Some(delta) = self.stack.pop() {
             self.delta = delta;
         }
@@ -73,6 +84,8 @@ impl SessionedCache {
     }
 
     pub fn stack_commit(mut self) -> Self {
+        // Newest update stored in self.delta is merged to stack head,
+        // then replace self.delta by stack head
         if let Some(mut delta) = self.stack.pop() {
             delta.append(&mut self.delta);
             self.delta = delta;
@@ -122,7 +135,7 @@ impl SessionedCache {
 
     /// discards pending KVs in session since last stack-pushing
     ///
-    /// rollback to base
+    /// rollback to the head of the stack
     pub fn discard(&mut self) {
         self.delta.clear();
     }
@@ -135,7 +148,27 @@ impl SessionedCache {
     ///
     /// use case: when KV is not allowed to change twice in one block
     pub fn touched(&self, key: &[u8]) -> bool {
-        self.delta.contains_key(key) || self.base.contains_key(key)
+        let touched_on_stack = || self.stack.iter().rev().any(|delta| delta.contains_key(key));
+        self.delta.contains_key(key) || touched_on_stack() || self.base.contains_key(key)
+    }
+
+    pub fn exists_since(&self, key: &[u8], since: usize) -> bool {
+        let max = self.stack.len() + 1;
+
+        if since > max {
+            false
+        } else {
+            let in_delta = self.delta.contains_key(key);
+            if since == max {
+                return in_delta;
+            }
+            let on_stack_or_in_delta =
+                in_delta || self.stack.iter().rev().any(|delta| delta.contains_key(key));
+            if since > 0 {
+                return on_stack_or_in_delta;
+            }
+            on_stack_or_in_delta || self.base.contains_key(key)
+        }
     }
 
     /// Returns whether the cache is used for MerkDB or RocksDB
@@ -147,7 +180,16 @@ impl SessionedCache {
     ///
     /// use case: stop reading KV from db if already deleted
     pub fn deleted(&self, key: &[u8]) -> bool {
-        if self.delta.get(key) == Some(&None) || self.base.get(key) == Some(&None) {
+        let deleted_on_stack = || {
+            self.stack
+                .iter()
+                .rev()
+                .any(|delta| delta.get(key) == Some(&None))
+        };
+        if self.delta.get(key) == Some(&None)
+            || deleted_on_stack()
+            || self.base.get(key) == Some(&None)
+        {
             return true;
         }
         false
@@ -155,13 +197,23 @@ impl SessionedCache {
 
     /// keys that have been touched
     pub fn keys(&self) -> Vec<Vec<u8>> {
-        let keys: BTreeSet<_> = self.base.keys().chain(self.delta.keys()).cloned().collect();
+        let mut keys: BTreeSet<_> = self.base.keys().cloned().collect();
+        for delta in &self.stack {
+            let mut delta_keys = delta.keys().cloned().collect();
+            keys.append(&mut delta_keys);
+        }
+        let mut delta = self.delta.keys().cloned().collect();
+        keys.append(&mut delta);
+
         keys.into_iter().collect()
     }
 
     /// get all KVs
     pub fn values(&self) -> KVBatch {
         let mut kvs = self.base.clone();
+        for x in &self.stack {
+            kvs.append(&mut x.clone());
+        }
         kvs.append(&mut self.delta.clone());
         kvs.into_iter().collect()
     }
@@ -179,11 +231,21 @@ impl SessionedCache {
         match self.delta.get(key) {
             Some(Some(_)) => true, // has value in delta
             Some(None) => false,   // deleted in delta
-            None => match self.base.get(key) {
-                Some(Some(_)) => true, // has value in base
-                Some(None) => false,   // deleted in delta
-                None => false,
-            },
+            None => {
+                // check if key exists on stack
+                for delta in self.stack.iter().rev() {
+                    match delta.get(key) {
+                        Some(Some(_)) => return true,
+                        Some(None) => return false,
+                        None => {}
+                    }
+                }
+                match self.base.get(key) {
+                    Some(Some(_)) => true, // has value in base
+                    Some(None) => false,   // deleted in delta
+                    None => false,
+                }
+            }
         }
     }
 
@@ -196,11 +258,21 @@ impl SessionedCache {
         match self.delta.get(key) {
             Some(Some(value)) => Some(value.clone()),
             Some(None) => None,
-            None => match self.base.get(key) {
-                Some(Some(value)) => Some(value.clone()),
-                Some(None) => None,
-                None => None,
-            },
+            None => {
+                // find if key exists on stack
+                for delta in self.stack.iter().rev() {
+                    match delta.get(key) {
+                        Some(Some(value)) => return Some(value.clone()),
+                        Some(None) => return None,
+                        None => {}
+                    }
+                }
+                match self.base.get(key) {
+                    Some(Some(value)) => Some(value.clone()),
+                    Some(None) => None,
+                    None => None,
+                }
+            }
         }
     }
 
@@ -215,11 +287,21 @@ impl SessionedCache {
         match self.delta.get(key) {
             Some(Some(value)) => Some(Some(value.clone())),
             Some(None) => Some(None),
-            None => match self.base.get(key) {
-                Some(Some(value)) => Some(Some(value.clone())),
-                Some(None) => Some(None),
-                None => None,
-            },
+            None => {
+                // find if the key exists on stack
+                for delta in self.stack.iter().rev() {
+                    match delta.get(key) {
+                        Some(Some(value)) => return Some(Some(value.clone())),
+                        Some(None) => return Some(None),
+                        None => {}
+                    }
+                }
+                match self.base.get(key) {
+                    Some(Some(value)) => Some(Some(value.clone())),
+                    Some(None) => Some(None),
+                    None => None,
+                }
+            }
         }
     }
 
@@ -227,7 +309,7 @@ impl SessionedCache {
     pub fn iter(&self) -> CacheIter {
         CacheIter {
             iter: self.base.iter(),
-            in_base: true,
+            layer: 0,
             cache: self,
         }
     }
