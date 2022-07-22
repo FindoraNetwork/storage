@@ -75,10 +75,9 @@ impl SessionedCache {
         // self.delta is dropped and restored from stack head if the stack is not empty
         if let Some(delta) = self.stack.pop() {
             self.delta = delta;
-        } else if !self.delta.is_empty() {
-            self.delta = Default::default();
         } else {
-            //TODO: if we need return an error?
+            // If stack is empty, delta is not be changed.
+            // FixMe: if we need return an error?
         }
     }
 
@@ -88,6 +87,9 @@ impl SessionedCache {
         if let Some(mut delta) = self.stack.pop() {
             delta.append(&mut self.delta);
             self.delta = delta;
+        } else {
+            // If stack is empty, nothing should be done.
+            // FixMe: if we need return an error?
         }
     }
 
@@ -110,7 +112,7 @@ impl SessionedCache {
     pub fn commit(&mut self) -> Result<KVBatch, String> {
         // Don't commit in no-empty-stack context
         if !self.stack.is_empty() {
-            return Err("No empty stack".to_string());
+            return Err("Not empty stack".to_string());
         }
         // Merge delta into the base version
         self.rebase();
@@ -123,7 +125,7 @@ impl SessionedCache {
     pub fn commit_only(&mut self) -> Result<(), String> {
         // Don't commit in no-empty-stack context
         if !self.stack.is_empty() {
-            return Err("No empty stack".to_string());
+            return Err("Not empty stack".to_string());
         }
         // Merge delta into the base version
         self.rebase();
@@ -858,6 +860,7 @@ mod tests {
 
         assert!(cache.commit().is_err());
 
+        // will drop changes since last stack_push
         cache.stack_discard();
 
         assert_eq!(cache.getv(b"test_key_0"), Some(b"test_value_0".to_vec()));
@@ -946,6 +949,7 @@ mod tests {
     fn cache_nested_stack_commit_discard_case1() {
         let mut cache = SessionedCache::new(true);
 
+        cache.stack_push();
         cache.put(b"key0", b"value0".to_vec());
         cache.put(b"key1", b"value1".to_vec());
 
@@ -971,6 +975,7 @@ mod tests {
     fn cache_nested_stack_commit_discard_case2() {
         let mut cache = SessionedCache::new(true);
 
+        cache.stack_push();
         cache.put(b"key0", b"value0".to_vec());
         cache.put(b"key1", b"value1".to_vec());
         {
@@ -996,6 +1001,7 @@ mod tests {
     fn cache_nested_stack_commit_discard_case3() {
         let mut cache = SessionedCache::new(true);
 
+        cache.stack_push();
         cache.put(b"key0", b"value0".to_vec());
         cache.put(b"key1", b"value1".to_vec());
 
@@ -1028,6 +1034,7 @@ mod tests {
     fn cache_nested_stack_commit_discard_case4() {
         let mut cache = SessionedCache::new(true);
 
+        cache.stack_push();
         cache.put(b"key0", b"value0".to_vec());
         cache.put(b"key1", b"value1".to_vec());
         {
@@ -1069,6 +1076,7 @@ mod tests {
     fn cache_nested_stack_commit_discard() {
         let mut cache = SessionedCache::new(true);
 
+        // no stack_push before these updates
         cache.put(b"key0", b"value0".to_vec());
         cache.put(b"key1", b"value1".to_vec());
 
