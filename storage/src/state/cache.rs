@@ -656,8 +656,10 @@ mod tests {
 
         // put data in random order
         cache.put(b"k10", b"v10".to_vec());
+        cache.stack_push();
         cache.put(b"k30", b"v30".to_vec());
         cache.put(b"k20", b"v20".to_vec());
+        cache.stack_push();
 
         // iterate
         let actual = cache.values();
@@ -675,12 +677,14 @@ mod tests {
     fn cache_put_delete_n_iterate() {
         let mut cache = SessionedCache::new(true);
 
+        cache.stack_push();
         // put data in random order
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k40", b"v40".to_vec());
         cache.put(b"k30", b"v30".to_vec());
         cache.put(b"k20", b"v20".to_vec());
 
+        cache.stack_push();
         // delete some and double-delete shouldn't hurt
         cache.delete(b"k10");
         cache.delete(b"k10");
@@ -703,18 +707,24 @@ mod tests {
     fn cache_commit_n_put_delete_discard_n_iterate() {
         let mut cache = SessionedCache::new(true);
 
+        cache.stack_push();
         // put data in random order and delete one
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k40", b"v40".to_vec());
+        cache.stack_push();
         cache.put(b"k30", b"v30".to_vec());
         cache.put(b"k20", b"v20".to_vec());
+        cache.stack_commit();
         cache.delete(b"k10");
+        cache.stack_commit();
         cache.commit().unwrap();
 
+        cache.stack_push();
         // put/delete data again
         cache.put(b"k10", b"v11".to_vec());
         cache.delete(b"k20");
         cache.delete(b"k30");
+        cache.stack_push();
         cache.put(b"k40", b"v41".to_vec());
         cache.put(b"k50", b"v50".to_vec());
 
@@ -729,6 +739,8 @@ mod tests {
         ];
         assert_eq!(actual, expected);
 
+        cache.stack_commit();
+        cache.stack_commit();
         // discard this session
         cache.discard();
 
@@ -779,15 +791,18 @@ mod tests {
         let mut cache = SessionedCache::new(true);
         let mut my_cache = KVecMap::new();
 
+        cache.stack_push();
         //Put some date into cache
         cache.put(b"validator_1", b"v10".to_vec());
         cache.put(b"k30", b"v30".to_vec());
         cache.put(b"k20", b"v20".to_vec());
+        cache.stack_push();
         cache.put(b"validator_5", b"v50".to_vec());
         cache.put(b"validator_3", b"v30".to_vec());
         cache.put(b"validator_2", b"v20".to_vec());
         cache.put(b"validator_4", b"v40".to_vec());
 
+        cache.stack_push();
         //Del two of validators
         cache.delete(b"validator_1");
         cache.delete(b"validator_3");
