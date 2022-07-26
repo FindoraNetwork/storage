@@ -76,7 +76,7 @@ impl SessionedCache {
         if let Some(delta) = self.stack.pop() {
             self.delta = delta;
         } else {
-            // If stack is empty, delta is not be changed.
+            // If stack is empty, delta will not be changed.
             // FixMe: if we need return an error?
         }
     }
@@ -123,7 +123,7 @@ impl SessionedCache {
 
     /// commits pending KVs in session without return them
     pub fn commit_only(&mut self) -> Result<(), String> {
-        // Don't commit in no-empty-stack context
+        // Don't commit under no-empty-stack context
         if !self.stack.is_empty() {
             return Err("Not empty stack".to_string());
         }
