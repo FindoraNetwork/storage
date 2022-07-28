@@ -4,7 +4,7 @@ use std::env::temp_dir;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::time::SystemTime;
-use storage::db::{IterOrder, KVBatch, KValue, MerkleDB};
+use storage::db::{DbIter, IterOrder, KVBatch, KValue, MerkleDB};
 
 /// Wraps a Findora db instance and deletes it from disk it once it goes out of scope.
 pub struct TempFinDB {
@@ -51,21 +51,11 @@ impl MerkleDB for TempFinDB {
         self.deref_mut().put_batch(kvs)
     }
 
-    fn iter(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         self.deref().iter(lower, upper, order)
     }
 
-    fn iter_aux(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         self.deref().iter_aux(lower, upper, order)
     }
 

@@ -7,6 +7,7 @@ pub type StoreKey = Vec<u8>;
 pub type KValue = (StoreKey, Vec<u8>);
 pub type KVEntry = (StoreKey, Option<Vec<u8>>);
 pub type KVBatch = Vec<KVEntry>;
+pub type DbIter<'a> = Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + 'a>;
 
 pub enum IterOrder {
     Asc,
@@ -23,19 +24,9 @@ pub trait MerkleDB {
 
     fn put_batch(&mut self, kvs: KVBatch) -> Result<()>;
 
-    fn iter(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_>;
+    fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_>;
 
-    fn iter_aux(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_>;
+    fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_>;
 
     fn commit(&mut self, kvs: KVBatch, flush: bool) -> Result<()>;
 

@@ -32,6 +32,18 @@ impl<D: MerkleDB> State<D> {
         }
     }
 
+    pub fn stack_push(&mut self) {
+        self.cache.stack_push();
+    }
+
+    pub fn stack_commit(&mut self) {
+        self.cache.stack_commit();
+    }
+
+    pub fn stack_discard(&mut self) {
+        self.cache.stack_discard();
+    }
+
     /// Creates a State with a new cache and shared ChainState
     pub fn new(cs: Arc<RwLock<ChainState<D>>>, is_merkle: bool) -> Self {
         State {
@@ -132,7 +144,10 @@ impl<D: MerkleDB> State<D> {
 
         //Get batch for current block and remove uncessary DELETE.
         //Note: DB will panic if it doesn't contain the key being deleted.
-        let mut kv_batch = self.cache.commit();
+        let mut kv_batch = self
+            .cache
+            .commit()
+            .map_err(|e| eg!("Failed to commit cache {}", e))?;
         kv_batch.retain(|(k, v)| match cs.exists(k).unwrap() {
             true => true,
             false => v.is_some(),
@@ -149,7 +164,8 @@ impl<D: MerkleDB> State<D> {
     ///
     /// The Base cache gets updated with the current cache.
     pub fn commit_session(&mut self) {
-        self.cache.commit_only();
+        //FixMe: remove unwrap
+        self.cache.commit_only().unwrap();
     }
 
     /// Discards the current session cache.
