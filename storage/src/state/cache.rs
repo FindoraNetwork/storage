@@ -185,16 +185,16 @@ impl SessionedCache {
     ///
     /// use case: stop reading KV from db if already deleted
     pub fn deleted(&self, key: &[u8]) -> bool {
-        let deleted_on_stack = || {
-            self.stack
-                .iter()
-                .rev()
-                .any(|delta| delta.get(key) == Some(&None))
-        };
-        if self.delta.get(key) == Some(&None)
-            || deleted_on_stack()
-            || self.base.get(key) == Some(&None)
-        {
+        if self.delta.get(key) == Some(&None) {
+            return true;
+        }
+        for delta in self.stack.iter().rev() {
+            match delta.get(key).map(|v| v.is_none()) {
+                Some(v) => return v,
+                None => {}
+            }
+        }
+        if self.base.get(key) == Some(&None) {
             return true;
         }
         false
