@@ -133,6 +133,10 @@ impl SessionedCache {
         Ok(())
     }
 
+    pub fn good_commit(&mut self) -> bool {
+        self.stack.is_empty()
+    }
+
     /// discards pending KVs in session since last stack-pushing
     ///
     /// rollback to the head of the stack
@@ -1133,5 +1137,22 @@ mod tests {
             assert_eq!(cache.getv(b"key1"), Some(b"value1".to_vec()));
             assert_eq!(cache.getv(b"key2"), Some(b"value2".to_vec()));
         }
+    }
+
+    #[test]
+    fn cache_stack_good_commit() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"key0", b"value0".to_vec());
+        cache.stack_push();
+
+        cache.put(b"key1", b"value1".to_vec());
+        cache.stack_push();
+
+        cache.stack_commit();
+        assert!(!cache.good_commit());
+
+        cache.stack_commit();
+        assert!(cache.good_commit());
     }
 }
