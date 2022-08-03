@@ -1155,4 +1155,41 @@ mod tests {
         cache.stack_commit();
         assert!(cache.good_commit());
     }
+
+    #[test]
+    fn cache_deleted() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"key0", b"value0".to_vec());
+        cache.delete(b"key0");
+        cache.commit_only().unwrap();
+
+        cache.put(b"key0", b"value1".to_vec());
+        assert!(!cache.deleted(b"key0"));
+    }
+
+    #[test]
+    fn cache_stack_deleted() {
+        let mut cache = SessionedCache::new(true);
+
+        cache.put(b"key0", b"value0".to_vec());
+        cache.delete(b"key0");
+        assert!(cache.deleted(b"key0"));
+
+        cache.stack_push();
+        assert!(cache.deleted(b"key0"));
+        cache.stack_commit();
+        assert!(cache.deleted(b"key0"));
+
+        cache.put(b"key0", b"value1".to_vec());
+        cache.stack_commit();
+        assert!(!cache.deleted(b"key0"));
+
+        cache.delete(b"key0");
+        cache.commit_only().unwrap();
+        assert!(cache.deleted(b"key0"));
+
+        cache.put(b"key0", b"value2".to_vec());
+        assert!(!cache.deleted(b"key0"));
+    }
 }
