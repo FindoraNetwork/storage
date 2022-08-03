@@ -25,7 +25,7 @@ impl<'a> Iterator for CacheIter<'a> {
             // Iterates self.base, then self.stack, and self.delta
             // KVs that modified later will be skipped when iterating.
             if let Some(item) = self.iter.next() {
-                if !self.cache.exists_since(item.0, self.layer + 1) {
+                if !self.cache.touched_since(item.0, self.layer + 1) {
                     break Some(item);
                 }
             } else if self.layer < max - 1 {
@@ -153,7 +153,7 @@ impl SessionedCache {
     }
 
     // `since` is included
-    pub fn exists_since(&self, key: &[u8], since: usize) -> bool {
+    pub fn touched_since(&self, key: &[u8], since: usize) -> bool {
         let max = self.stack.len() + 1;
 
         if since > max {
@@ -936,26 +936,26 @@ mod tests {
         cache.put(b"key1", b"value1".to_vec());
         cache.put(b"key2", b"value2".to_vec());
 
-        assert!(cache.exists_since(b"key0", 0));
-        assert!(cache.exists_since(b"key1", 1));
-        assert!(!cache.exists_since(b"key2", 2));
+        assert!(cache.touched_since(b"key0", 0));
+        assert!(cache.touched_since(b"key1", 1));
+        assert!(!cache.touched_since(b"key2", 2));
 
         cache.stack_push();
 
         // store in self.stack[0]
         // self.delta is layer 2 now, and it's empty
-        assert!(cache.exists_since(b"key0", 0));
-        assert!(cache.exists_since(b"key1", 1));
-        assert!(!cache.exists_since(b"key2", 2));
+        assert!(cache.touched_since(b"key0", 0));
+        assert!(cache.touched_since(b"key1", 1));
+        assert!(!cache.touched_since(b"key2", 2));
 
         // store in self.delta, layer 1
         cache.stack_commit();
         // store in self.base, layer 0
         cache.commit_only().unwrap();
 
-        assert!(cache.exists_since(b"key0", 0));
-        assert!(!cache.exists_since(b"key1", 1));
-        assert!(!cache.exists_since(b"key2", 2));
+        assert!(cache.touched_since(b"key0", 0));
+        assert!(!cache.touched_since(b"key1", 1));
+        assert!(!cache.touched_since(b"key2", 2));
     }
 
     // Case 1: A(commit)------------------>B(commit)---------------------------C(commit)
