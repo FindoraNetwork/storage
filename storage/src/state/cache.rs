@@ -1,5 +1,6 @@
 use crate::db::KVBatch;
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "iterator")]
 use std::iter::Iterator;
 
 /// key-value map
@@ -11,12 +12,14 @@ const MAX_MERK_KEY_LEN: u8 = u8::MAX;
 const MAX_MERK_VAL_LEN: u16 = u16::MAX;
 
 /// cache iterator
+#[cfg(feature = "iterator")]
 pub struct CacheIter<'a> {
     cache: &'a SessionedCache,
     layer: usize, // base is layer 0, delta is the last layer
     iter: std::collections::btree_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>,
 }
 
+#[cfg(feature = "iterator")]
 impl<'a> Iterator for CacheIter<'a> {
     type Item = (&'a Vec<u8>, &'a Option<Vec<u8>>);
     fn next(&mut self) -> Option<Self::Item> {
@@ -46,12 +49,20 @@ impl<'a> Iterator for CacheIter<'a> {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Copy)]
+pub enum StackStatus {
+    Good,
+    OverCommit,
+    OverDiscard,
+}
+
 /// sessioned KV cache
 #[derive(Clone)]
 pub struct SessionedCache {
     delta: KVMap,
     base: KVMap,
     stack: Vec<KVMap>,
+    status: StackStatus,
     is_merkle: bool,
 }
 
@@ -62,35 +73,45 @@ impl SessionedCache {
             delta: KVMap::new(),
             base: KVMap::new(),
             stack: vec![],
+            status: StackStatus::Good,
             is_merkle,
         }
     }
 
     pub fn stack_push(&mut self) {
-        // self.delta is cleared and its data is pushed to self.stack
+        // push current delta (self.delta) to stack
         self.stack.push(std::mem::take(&mut self.delta));
     }
 
     pub fn stack_discard(&mut self) {
-        // self.delta is dropped and restored from stack head if the stack is not empty
+        // drop current delta (self.delta) and restore the last (stack head)
         if let Some(delta) = self.stack.pop() {
             self.delta = delta;
         } else {
-            // If stack is empty, delta will not be changed.
-            // FixMe: if we need return an error?
+            // nothing to discard
+            self.status = StackStatus::OverDiscard;
         }
     }
 
     pub fn stack_commit(&mut self) {
-        // Newest update stored in self.delta is merged to stack head,
-        // then replace self.delta by stack head
+        // merge last delta (stack head) into current (self.delta)
         if let Some(mut delta) = self.stack.pop() {
             delta.append(&mut self.delta);
             self.delta = delta;
         } else {
-            // If stack is empty, nothing should be done.
-            // FixMe: if we need return an error?
+            // nothing to commit
+            self.status = StackStatus::OverCommit;
         }
+    }
+
+    /// It's user's responsibility to pair ```stack_push/commit/discard```
+    /// - If you never used stack APIs: NO NEED to call this function at all.
+    /// - If you have  used stack APIs: NO NEED to call this function at all if you paired push/commit/discard.
+    /// - If you have  used stack APIs: Call this function ONLY WHEN you don't know the push/commit/discard are well paired or not.
+    ///
+    /// Call ```discard``` to recover if it returns false
+    pub fn good2_commit(&self) -> bool {
+        self.stack.is_empty() && self.status == StackStatus::Good
     }
 
     /// put/update value by key
@@ -109,35 +130,27 @@ impl SessionedCache {
     }
 
     /// commits pending KVs in session
-    pub fn commit(&mut self) -> Result<KVBatch, String> {
-        // Don't commit in no-empty-stack context
-        if !self.stack.is_empty() {
-            return Err("Not empty stack".to_string());
-        }
+    pub fn commit(&mut self) -> KVBatch {
         // Merge delta into the base version
         self.rebase();
 
         // Return updated values
-        Ok(self.values())
+        self.values()
     }
 
     /// commits pending KVs in session without return them
-    pub fn commit_only(&mut self) -> Result<(), String> {
-        // Don't commit under no-empty-stack context
-        if !self.stack.is_empty() {
-            return Err("Not empty stack".to_string());
-        }
+    pub fn commit_only(&mut self) {
         // Merge delta into the base version
         self.rebase();
-
-        Ok(())
     }
 
-    /// discards pending KVs in session since last stack-pushing
+    /// discards pending KVs in session since last commit
     ///
-    /// rollback to the head of the stack
+    /// rollback to base and reset status
     pub fn discard(&mut self) {
         self.delta.clear();
+        self.stack.clear();
+        self.status = StackStatus::Good;
     }
 
     /// KV touched or not so far
@@ -245,6 +258,7 @@ impl SessionedCache {
                         None => {}
                     }
                 }
+                // check if key exists in base
                 match self.base.get(key) {
                     Some(Some(_)) => true, // has value in base
                     Some(None) => false,   // deleted in delta
@@ -272,6 +286,7 @@ impl SessionedCache {
                         None => {}
                     }
                 }
+                // find if key exists in base
                 match self.base.get(key) {
                     Some(Some(value)) => Some(value.clone()),
                     Some(None) => None,
@@ -301,6 +316,7 @@ impl SessionedCache {
                         None => {}
                     }
                 }
+                // find if the key exists in base
                 match self.base.get(key) {
                     Some(Some(value)) => Some(Some(value.clone())),
                     Some(None) => Some(None),
@@ -311,6 +327,7 @@ impl SessionedCache {
     }
 
     /// iterator
+    #[cfg(feature = "iterator")]
     pub fn iter(&self) -> CacheIter {
         CacheIter {
             iter: self.base.iter(),
@@ -322,13 +339,34 @@ impl SessionedCache {
     /// prefix iterator
     pub fn iter_prefix(&self, prefix: &[u8], map: &mut KVecMap) {
         // insert/update new KVs and remove deleted KVs
-        for (k, v) in self.iter() {
+        let mut update = |k: &Vec<u8>, v: &Option<Vec<u8>>| {
             if k.starts_with(prefix) {
                 if let Some(v) = v {
                     map.insert(k.to_owned(), v.to_owned());
                 } else {
                     map.remove(k.as_slice());
                 }
+            }
+        };
+        #[cfg(feature = "iterator")]
+        for (k, v) in self.iter() {
+            update(k, v);
+        }
+        #[cfg(not(feature = "iterator"))]
+        {
+            // search in self.base
+            for (k, v) in &self.base {
+                update(k, v);
+            }
+            // search on stack
+            for delta in &self.stack {
+                for (k, v) in delta {
+                    update(k, v);
+                }
+            }
+            // search in self.delta
+            for (k, v) in &self.delta {
+                update(k, v);
             }
         }
     }
@@ -514,7 +552,7 @@ mod tests {
         cache.put(b"k20", b"v20".to_vec());
 
         cache.stack_commit();
-        cache.commit().unwrap();
+        cache.commit();
 
         // verify touched() flag
         assert!(cache.touched(b"k10"));
@@ -548,7 +586,7 @@ mod tests {
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
         cache.put(b"k30", b"v30".to_vec());
-        cache.commit().unwrap();
+        cache.commit();
 
         // put/delete data again
         cache.put(b"k10", b"v11".to_vec());
@@ -605,7 +643,7 @@ mod tests {
         // put data and commit
         cache.put(b"k10", b"v10".to_vec());
         cache.put(b"k20", b"v20".to_vec());
-        cache.commit().unwrap();
+        cache.commit();
 
         // put/delete data again
         cache.put(b"k10", b"v11".to_vec());
@@ -717,7 +755,7 @@ mod tests {
         cache.stack_commit();
         cache.delete(b"k10");
         cache.stack_commit();
-        cache.commit().unwrap();
+        cache.commit();
 
         cache.stack_push();
         // put/delete data again
@@ -844,15 +882,12 @@ mod tests {
 
         let expected = vec![
             (b"test_key_0".to_vec(), Some(b"test_value_0".to_vec())),
-            (b"test_key_3".to_vec(), Some(b"test_value_3".to_vec())),
             (b"test_key_1".to_vec(), None),
             (b"test_key_2".to_vec(), Some(b"value_2".to_vec())),
+            (b"test_key_3".to_vec(), Some(b"test_value_3".to_vec())),
         ];
 
-        let values = cache
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect::<Vec<_>>();
+        let values = cache.values();
 
         assert_eq!(expected, values);
     }
@@ -873,7 +908,7 @@ mod tests {
         assert_eq!(cache.getv(b"test_key_1"), None);
         assert_eq!(cache.getv(b"test_key_2"), Some(b"test_value_2".to_vec()));
 
-        assert!(cache.commit().is_err());
+        assert!(!cache.good2_commit());
 
         // will drop changes since last stack_push
         cache.stack_discard();
@@ -882,7 +917,8 @@ mod tests {
         assert_eq!(cache.getv(b"test_key_1"), Some(b"test_value_1".to_vec()));
         assert_eq!(cache.getv(b"test_key_2"), None);
 
-        assert!(cache.commit().is_ok());
+        assert!(cache.good2_commit());
+        cache.commit();
     }
 
     #[test]
@@ -896,20 +932,22 @@ mod tests {
         cache.delete(b"test_key_2");
 
         // all stack should be committed or discarded before calling cache.commit
-        assert!(cache.commit().is_err());
-        assert!(cache.commit_only().is_err());
+        assert!(!cache.good2_commit());
 
         cache.stack_commit();
         // All key-values are stored in self.delta now,
         // we need commit the cache to rebase the cache
-        cache.commit().unwrap();
+        assert!(cache.good2_commit());
+        cache.commit();
 
         assert_eq!(cache.getv(b"test_key_0"), Some(b"test_value_0".to_vec()));
         assert_eq!(cache.getv(b"test_key_1"), Some(b"test_value_1".to_vec()));
         assert_eq!(cache.getv(b"test_key_2"), None);
 
-        // Will not effect key-values before stack_commit
+        // OverDiscard will not effect key-values before stack_commit
         cache.stack_discard();
+        assert!(!cache.good2_commit());
+        cache.discard();
 
         let expected = vec![
             (b"test_key_0".to_vec(), Some(b"test_value_0".to_vec())),
@@ -917,14 +955,12 @@ mod tests {
             (b"test_key_2".to_vec(), None),
         ];
 
-        let kvs = cache
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect::<Vec<_>>();
+        let kvs = cache.values();
 
         assert_eq!(expected, kvs);
 
-        assert!(cache.commit().is_ok());
+        assert!(cache.good2_commit());
+        cache.commit();
     }
 
     #[test]
@@ -951,7 +987,7 @@ mod tests {
         // store in self.delta, layer 1
         cache.stack_commit();
         // store in self.base, layer 0
-        cache.commit_only().unwrap();
+        cache.commit_only();
 
         assert!(cache.touched_since(b"key0", 0));
         assert!(!cache.touched_since(b"key1", 1));

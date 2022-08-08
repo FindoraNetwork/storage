@@ -144,10 +144,7 @@ impl<D: MerkleDB> State<D> {
 
         //Get batch for current block and remove uncessary DELETE.
         //Note: DB will panic if it doesn't contain the key being deleted.
-        let mut kv_batch = self
-            .cache
-            .commit()
-            .map_err(|e| eg!("Failed to commit cache {}", e))?;
+        let mut kv_batch = self.cache.commit();
         kv_batch.retain(|(k, v)| match cs.exists(k).unwrap() {
             true => true,
             false => v.is_some(),
@@ -164,8 +161,7 @@ impl<D: MerkleDB> State<D> {
     ///
     /// The Base cache gets updated with the current cache.
     pub fn commit_session(&mut self) {
-        //FixMe: remove unwrap
-        self.cache.commit_only().unwrap();
+        self.cache.commit_only();
     }
 
     /// Discards the current session cache.
