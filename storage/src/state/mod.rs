@@ -32,6 +32,18 @@ impl<D: MerkleDB> State<D> {
         }
     }
 
+    pub fn stack_push(&mut self) {
+        self.cache.stack_push();
+    }
+
+    pub fn stack_commit(&mut self) {
+        self.cache.stack_commit();
+    }
+
+    pub fn stack_discard(&mut self) {
+        self.cache.stack_discard();
+    }
+
     /// Creates a State with a new cache and shared ChainState
     pub fn new(cs: Arc<RwLock<ChainState<D>>>, is_merkle: bool) -> Self {
         State {
