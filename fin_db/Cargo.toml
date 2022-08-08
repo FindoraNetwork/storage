@@ -8,3 +8,6 @@ edition = "2021"
 ruc = "1.0"
 fmerk = "0.1"
 storage = { path = "../storage", version = "0.2" }
+
+[features]
+iterator = ["storage/iterator"]

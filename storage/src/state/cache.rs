@@ -1,5 +1,6 @@
 use crate::db::KVBatch;
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "iterator")]
 use std::iter::Iterator;
 
 /// key-value map
@@ -11,12 +12,14 @@ const MAX_MERK_KEY_LEN: u8 = u8::MAX;
 const MAX_MERK_VAL_LEN: u16 = u16::MAX;
 
 /// cache iterator
+#[cfg(feature = "iterator")]
 pub struct CacheIter<'a> {
     cache: &'a SessionedCache,
     layer: usize, // base is layer 0, delta is the last layer
     iter: std::collections::btree_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>,
 }
 
+#[cfg(feature = "iterator")]
 impl<'a> Iterator for CacheIter<'a> {
     type Item = (&'a Vec<u8>, &'a Option<Vec<u8>>);
     fn next(&mut self) -> Option<Self::Item> {
@@ -324,6 +327,7 @@ impl SessionedCache {
     }
 
     /// iterator
+    #[cfg(feature = "iterator")]
     pub fn iter(&self) -> CacheIter {
         CacheIter {
             iter: self.base.iter(),
@@ -335,13 +339,34 @@ impl SessionedCache {
     /// prefix iterator
     pub fn iter_prefix(&self, prefix: &[u8], map: &mut KVecMap) {
         // insert/update new KVs and remove deleted KVs
-        for (k, v) in self.iter() {
+        let mut update = |k: &Vec<u8>, v: &Option<Vec<u8>>| {
             if k.starts_with(prefix) {
                 if let Some(v) = v {
                     map.insert(k.to_owned(), v.to_owned());
                 } else {
                     map.remove(k.as_slice());
                 }
+            }
+        };
+        #[cfg(feature = "iterator")]
+        for (k, v) in self.iter() {
+            update(k, v);
+        }
+        #[cfg(not(feature = "iterator"))]
+        {
+            // search in self.base
+            for (k, v) in &self.base {
+                update(k, v);
+            }
+            // search on stack
+            for delta in &self.stack {
+                for (k, v) in delta {
+                    update(k, v);
+                }
+            }
+            // search in self.delta
+            for (k, v) in &self.delta {
+                update(k, v);
             }
         }
     }
@@ -857,15 +882,12 @@ mod tests {
 
         let expected = vec![
             (b"test_key_0".to_vec(), Some(b"test_value_0".to_vec())),
-            (b"test_key_3".to_vec(), Some(b"test_value_3".to_vec())),
             (b"test_key_1".to_vec(), None),
             (b"test_key_2".to_vec(), Some(b"value_2".to_vec())),
+            (b"test_key_3".to_vec(), Some(b"test_value_3".to_vec())),
         ];
 
-        let values = cache
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect::<Vec<_>>();
+        let values = cache.values();
 
         assert_eq!(expected, values);
     }
@@ -933,10 +955,7 @@ mod tests {
             (b"test_key_2".to_vec(), None),
         ];
 
-        let kvs = cache
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect::<Vec<_>>();
+        let kvs = cache.values();
 
         assert_eq!(expected, kvs);
 

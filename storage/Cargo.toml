@@ -15,3 +15,6 @@ serde_json = "1.0"
 fin_db = { path = "../fin_db", version = "0.2" }
 temp_db = { path = "../temp_db", version = "0.2" }
 mem_db = { path = "../mem_db", version = "0.2" }
+
+[features]
+iterator = []
