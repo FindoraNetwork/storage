@@ -3,15 +3,17 @@
 /// This Structure will be the main interface to the persistence layer provided by MerkleDB
 /// and RocksDB backend.
 ///
-use crate::db::{IterOrder, KVBatch, KVEntry, KValue, MerkleDB};
-use crate::state::cache::KVMap;
-use crate::store::Prefix;
+use crate::{
+    db::{IterOrder, KVBatch, KVEntry, KValue, MerkleDB},
+    state::cache::KVMap,
+    store::Prefix,
+};
 use ruc::*;
-use std::ops::Range;
-use std::path::Path;
-use std::str;
+use std::{ops::Range, path::Path, str};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
+const AUX_VERSION: &[u8; 10] = b"AuxVersion";
+const CUR_AUX_VERSION: u64 = 0x01;
 const SPLIT_BGN: &str = "_";
 const TOMBSTONE: [u8; 1] = [206u8];
 
@@ -26,6 +28,7 @@ pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 pub struct ChainState<D: MerkleDB> {
     name: String,
     ver_window: u64,
+    version: u64,
     db: D,
 }
 
@@ -46,8 +49,12 @@ impl<D: MerkleDB> ChainState<D> {
         let mut cs = ChainState {
             name: db_name,
             ver_window,
+            version: Default::default(),
             db,
         };
+
+        cs.version = cs.get_aux_version().expect("Need a valid version");
+
         cs.clean_aux_db();
 
         cs
@@ -63,6 +70,30 @@ impl<D: MerkleDB> ChainState<D> {
     /// This section of data is not used for root hash calculations.
     pub fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.db.get_aux(key)
+    }
+
+    /// Get aux database version
+    ///
+    /// The default version is ox00
+    pub fn get_aux_version(&self) -> Result<u64> {
+        if let Some(version) = self.get_aux(AUX_VERSION.to_vec().as_ref())? {
+            let ver_str = String::from_utf8(version).c(d!("Invalid aux version string"))?;
+            return ver_str
+                .parse::<u64>()
+                .c(d!("aux version should be a valid 64-bit long integer"));
+        }
+
+        Ok(0x00)
+    }
+
+    /// Update or Set aux database version
+    ///
+    pub fn set_aux_version(&mut self, version: u8) -> Result<()> {
+        let batch = vec![(AUX_VERSION.to_vec(), Some(version.to_string().into_bytes()))];
+
+        self.db.commit(batch, true).c(d!())?;
+
+        Ok(())
     }
 
     /// Iterates MerkleDB for a given range of keys.
@@ -151,14 +182,12 @@ impl<D: MerkleDB> ChainState<D> {
         if self.ver_window == 0 || height < self.ver_window + 1 {
             return Ok(());
         }
-        //Build range keys for window limits
-        let window_start_height = Self::height_str(height - self.ver_window);
-        let pruning_height = Self::height_str(height - self.ver_window - 1);
 
-        let new_window_limit = Prefix::new("VER".as_bytes()).push(window_start_height.as_bytes());
+        //Build range keys for window limits
+        let pruning_height = Self::height_str(height - self.ver_window - 1);
         let old_window_limit = Prefix::new("VER".as_bytes()).push(pruning_height.as_bytes());
 
-        //Range all auxiliary keys at pruning height
+        // move key-value pairs of left window side to baseline
         self.iterate_aux(
             &old_window_limit.begin(),
             &old_window_limit.end(),
@@ -168,35 +197,17 @@ impl<D: MerkleDB> ChainState<D> {
                 if raw_key.is_empty() {
                     return false;
                 }
-                //If the key doesn't already exist in the window start height, need to add it
                 //If the value of this key is a TOMBSTONE then we don't need to add it
-                if !self
-                    .exists_aux(new_window_limit.push(raw_key.as_bytes()).as_ref())
-                    .unwrap_or(false)
-                    && v.ne(&TOMBSTONE)
-                {
-                    // Add the key to new window limit height
-                    batch.push((
-                        new_window_limit
-                            .clone()
-                            .push(raw_key.as_ref())
-                            .as_ref()
-                            .to_vec(),
-                        Some(v),
-                    ));
+                if v.ne(&TOMBSTONE) {
+                    // Add the key to baseline
+                    batch.push((Self::base_key(raw_key.as_bytes()), Some(v)));
                 }
                 //Delete the key from the batch
-                batch.push((
-                    old_window_limit
-                        .clone()
-                        .push(raw_key.as_ref())
-                        .as_ref()
-                        .to_vec(),
-                    None,
-                ));
+                batch.push((k, None));
                 false
             },
         );
+
         Ok(())
     }
 
@@ -353,6 +364,15 @@ impl<D: MerkleDB> ChainState<D> {
         format!("{:020}", height)
     }
 
+    /// build key Prefixed with Multi-Baseline for Auxiliary data
+    pub fn base_key(key: &[u8]) -> Vec<u8> {
+        Prefix::new("BASE".as_bytes())
+            .push(format!("{:020}", 0).as_bytes())
+            .push(key)
+            .as_ref()
+            .to_vec()
+    }
+
     /// Deconstruct versioned key and return parsed raw key
     pub fn get_raw_versioned_key(key: &[u8]) -> Result<String> {
         let key: Vec<_> = str::from_utf8(key)
@@ -408,7 +428,7 @@ impl<D: MerkleDB> ChainState<D> {
         if with_version {
             let kvs: Vec<_> = map
                 .into_iter()
-                .map(|(k, v)| (Self::versioned_key(&k, height), v))
+                .map(|(k, v)| (Self::base_key(&k), v))
                 .collect();
             kvs
         } else {
@@ -423,7 +443,6 @@ impl<D: MerkleDB> ChainState<D> {
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
         //Make sure that this key exists to avoid expensive query
         if self.get(key).c(d!("error getting value"))?.is_none() {
-            println!("------------ none ---------");
             return Ok(None);
         }
 
@@ -439,11 +458,6 @@ impl<D: MerkleDB> ChainState<D> {
         }
         //Iterate in descending order from upper bound until a value is found
         let mut result = None;
-        println!(
-            "--- lower {} --- upper {}",
-            lower_bound,
-            upper_bound.saturating_add(1)
-        );
         for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
             let key = Self::versioned_key(key, h);
             //Found a value matching key pattern, assign to result and break
@@ -455,6 +469,23 @@ impl<D: MerkleDB> ChainState<D> {
                 break;
             }
         }
+
+        if result.is_some() {
+            return Ok(result);
+        }
+
+        // TODO: search in snapshots
+
+        // Search it in Baseline
+        let key = Self::base_key(key);
+        if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
+            if val.eq(&TOMBSTONE) {
+                //TODO: double-check if could be None here
+                return Ok(None);
+            }
+            result = Some(val);
+        }
+
         Ok(result)
     }
 
@@ -471,12 +502,21 @@ impl<D: MerkleDB> ChainState<D> {
         }
 
         //Get batch for state at H = current_height - ver_window
-        let batch = self.build_state(current_height - self.ver_window, true);
+        let mut batch = self.build_state(current_height - self.ver_window, true);
+        // Update aux version if needed
+        if self.version != CUR_AUX_VERSION {
+            batch.push((
+                AUX_VERSION.to_vec(),
+                Some(CUR_AUX_VERSION.to_string().into_bytes()),
+            ));
+        }
         //Commit this batch at base height H
         if self.db.commit(batch, true).is_err() {
             println!("error building base chain state");
             return;
         }
+        //Read back Update in-memory flag
+        self.version = self.get_aux_version().expect("cannot read back version");
 
         //Define upper and lower bounds for iteration
         let lower = Prefix::new("VER".as_bytes());
