@@ -43,7 +43,7 @@ impl<D: MerkleDB> ChainState<D> {
     pub fn new(db: D, name: String, ver_window: u64) -> Self {
         let mut db_name = String::from("chain-state");
         if !name.is_empty() {
-            db_name = name;
+            db_name = name.clone();
         }
 
         let mut cs = ChainState {
@@ -55,6 +55,8 @@ impl<D: MerkleDB> ChainState<D> {
 
         let version = cs.get_aux_version().expect("Need a valid version");
         cs.aux_upgraded = version == CUR_AUX_VERSION;
+
+        println!("{} version {:020} ", name, version);
 
         if !cs.aux_upgraded {
             cs.clean_aux_db();
@@ -214,8 +216,13 @@ impl<D: MerkleDB> ChainState<D> {
             return Ok(());
         }
 
+        // After first commit, the following codes will be skipped
         let window_start_height = Self::height_str(height - self.ver_window);
         let new_window_limit = Prefix::new("VER".as_bytes()).push(window_start_height.as_bytes());
+        println!(
+            "lower window bound: new {}, old {}",
+            window_start_height, pruning_height
+        );
 
         //Range all auxiliary keys at pruning height
         self.iterate_aux(
