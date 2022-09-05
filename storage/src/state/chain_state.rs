@@ -3,15 +3,17 @@
 /// This Structure will be the main interface to the persistence layer provided by MerkleDB
 /// and RocksDB backend.
 ///
-use crate::db::{IterOrder, KVBatch, KVEntry, KValue, MerkleDB};
-use crate::state::cache::KVMap;
-use crate::store::Prefix;
+use crate::{
+    db::{IterOrder, KVBatch, KVEntry, KValue, MerkleDB},
+    state::cache::KVMap,
+    store::Prefix,
+};
 use ruc::*;
-use std::ops::Range;
-use std::path::Path;
-use std::str;
+use std::{ops::Range, path::Path, str};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
+const AUX_VERSION: &[u8; 10] = b"AuxVersion";
+const CUR_AUX_VERSION: u8 = 0x01;
 const SPLIT_BGN: &str = "_";
 const TOMBSTONE: [u8; 1] = [206u8];
 
@@ -63,6 +65,44 @@ impl<D: MerkleDB> ChainState<D> {
     /// This section of data is not used for root hash calculations.
     pub fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.db.get_aux(key)
+    }
+
+    /// Get aux database version
+    ///
+    /// Default version is ox00
+    pub fn get_aux_version(&self) -> Result<u8> {
+        if let Some(version) = self.get_aux(AUX_VERSION.to_vec().as_ref())? {
+            let ver_str = String::from_utf8(version).c(d!("Invalid aux version string"))?;
+            return ver_str
+                .parse::<u8>()
+                .c(d!("aux version should be a valid one-byte integer"));
+        }
+
+        Ok(0x00)
+    }
+
+    /// Update or Set aux database version
+    ///
+    pub fn set_aux_version(&mut self, version: u8) -> Result<()> {
+        let batch = vec![(AUX_VERSION.to_vec(), Some(version.to_string().into_bytes()))];
+
+        self.db.put_batch(batch.clone()).c(d!())?;
+        self.db.commit(batch, true).c(d!())?;
+
+        Ok(())
+    }
+
+    /// migrate aux database
+    ///
+    pub fn migrate_aux_database(&mut self) -> Result<()> {
+        if self.get_aux_version()? != CUR_AUX_VERSION {
+            return Ok(());
+        }
+
+        // build aux batch
+        self.set_aux_version(CUR_AUX_VERSION)?;
+
+        Ok(())
     }
 
     /// Iterates MerkleDB for a given range of keys.
