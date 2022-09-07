@@ -8,15 +8,8 @@ use crate::{
     state::cache::KVMap,
     store::Prefix,
 };
-use lazy_static::lazy_static;
 use ruc::*;
-use std::{
-    collections::HashMap,
-    io::{self, BufRead},
-    ops::Range,
-    path::Path,
-    str,
-};
+use std::{ops::Range, path::Path, str};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
@@ -37,37 +30,6 @@ pub struct ChainState<D: MerkleDB> {
     ver_window: u64,
     aux_upgraded: bool,
     db: D,
-}
-
-fn load_root_hash<P>(path: P) -> Result<HashMap<u64, Vec<u8>>>
-where
-    P: AsRef<Path>,
-{
-    let file = std::fs::File::open(path).c(d!())?;
-    let mut map = HashMap::new();
-    for line in io::BufReader::new(file).lines().flatten() {
-        let root_hash: Vec<&str> = line.splitn(2, ',').collect();
-        let height = root_hash
-            .first()
-            .and_then(|&h| h.parse::<u64>().ok())
-            .c(d!())?;
-        let hash = root_hash
-            .last()
-            .and_then(|&hash| hex::decode(hash).ok())
-            .c(d!())?;
-
-        map.insert(height, hash);
-    }
-
-    Ok(map)
-}
-
-lazy_static! {
-    static ref ROOT_HASH: HashMap<u64, Vec<u8>> = {
-        std::env::var("OVERRIDE_ROOT_HASH")
-            .map(|file| load_root_hash(file).unwrap())
-            .unwrap_or_default()
-    };
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -357,13 +319,7 @@ impl<D: MerkleDB> ChainState<D> {
         // CUR_AUX_VERSION has been updated, then update in-memory flag
         self.aux_upgraded = true;
 
-        let root_hash = if let Some(hash) = ROOT_HASH.get(&height) {
-            hash.clone()
-        } else {
-            self.root_hash()
-        };
-
-        Ok((root_hash, height))
+        Ok((self.root_hash(), height))
     }
 
     /// Export a copy of chain state on a specific height.

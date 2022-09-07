@@ -10,8 +10,6 @@ rand = "0.8"
 ruc = "1.0"
 serde = "1.0"
 serde_json = "1.0"
-lazy_static = "1.4.0"
-hex = "0.4.3"
 
 [dev-dependencies]
 fin_db = { path = "../fin_db", version = "0.2" }
