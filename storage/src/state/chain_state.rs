@@ -316,7 +316,7 @@ impl<D: MerkleDB> ChainState<D> {
                 .collect();
 
             // Prune Aux data in the db
-            //self.prune_aux_batch(height, &mut aux_batch)?;
+            self.prune_aux_batch(height, &mut aux_batch)?;
         }
 
         // Store the current height in auxiliary batch
