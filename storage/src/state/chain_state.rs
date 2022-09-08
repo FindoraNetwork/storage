@@ -263,6 +263,42 @@ impl<D: MerkleDB> ChainState<D> {
         Ok((self.root_hash(), height))
     }
 
+    fn export_base(&self, cs: &mut Self, height: u64) -> Result<()> {
+        let mut kvs = KVMap::new();
+
+        // setup bounds
+        let base = Prefix::new("BASE".as_bytes()).push(format!("{:020}", 0).as_bytes());
+
+        // collect commits on this height
+        self.iterate_aux(
+            &base.begin(),
+            &base.end(),
+            IterOrder::Asc,
+            &mut |(k, v)| -> bool {
+                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                if raw_key.is_empty() {
+                    return false;
+                }
+
+                if v.eq(&TOMBSTONE) {
+                    kvs.insert(raw_key.as_bytes().to_vec(), None);
+                } else {
+                    kvs.insert(raw_key.as_bytes().to_vec(), Some(v));
+                }
+                false
+            },
+        );
+
+        // commit this batch
+        let batch = kvs.into_iter().collect::<Vec<_>>();
+        if cs.commit(batch, height, true).is_err() {
+            let msg = format!("Replay failed on height {}", height);
+            return Err(eg!(msg));
+        }
+
+        Ok(())
+    }
+
     /// Export a copy of chain state on a specific height.
     ///
     /// * `cs` - The target chain state that holds the copy.
@@ -273,6 +309,12 @@ impl<D: MerkleDB> ChainState<D> {
     pub fn export(&self, cs: &mut Self, height: u64) -> Result<()> {
         // Height must be in version window
         let cur_height = self.height().c(d!())?;
+        if cur_height < self.ver_window + 1 {
+            return Err(eg!(format!(
+                "current height {} must bigger than ver_window {}",
+                cur_height, self.ver_window
+            )));
+        }
         let ver_range = (cur_height - self.ver_window)..=cur_height;
         if !ver_range.contains(&height) {
             return Err(eg!(format!(
@@ -280,6 +322,10 @@ impl<D: MerkleDB> ChainState<D> {
                 ver_range.start(),
                 ver_range.end()
             )));
+        }
+
+        if self.version == CUR_AUX_VERSION {
+            self.export_base(cs, cur_height - self.ver_window - 1)?;
         }
 
         // Replay historical commit, if any, on every height
