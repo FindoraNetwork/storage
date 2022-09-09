@@ -479,7 +479,7 @@ fn test_build_state() {
     );
 
     let built_batch: Vec<_> = cs
-        .build_state(20, true)
+        .build_state(20, Some(ChainState::<TempFinDB>::versioned_key_prefix(20)))
         .iter()
         .map(|(k, v)| {
             (

@@ -349,12 +349,22 @@ impl<D: MerkleDB> ChainState<D> {
             .to_vec()
     }
 
+    /// Build a prefix for a versioned key
+    pub fn versioned_key_prefix(height: u64) -> Prefix {
+        Prefix::new("VER".as_bytes()).push(Self::height_str(height).as_bytes())
+    }
+
     /// Build a height string for versioning history
     fn height_str(height: u64) -> String {
         format!("{:020}", height)
     }
 
-    /// build key Prefixed with Multi-Baseline for Auxiliary data
+    /// Build a prefix for a base key
+    pub fn base_key_prefix() -> Prefix {
+        Prefix::new("BASE".as_bytes()).push(Self::height_str(0).as_bytes())
+    }
+
+    /// build key Prefixed with Baseline for Auxiliary data
     pub fn base_key(key: &[u8]) -> Vec<u8> {
         Prefix::new("BASE".as_bytes())
             .push(Self::height_str(0).as_bytes())
@@ -388,7 +398,7 @@ impl<D: MerkleDB> ChainState<D> {
     /// Build the chain-state from height 1 to height H
     ///
     /// Returns a batch with KV pairs valid at height H
-    pub fn build_state(&self, height: u64, with_version: bool) -> KVBatch {
+    pub fn build_state(&self, height: u64, prefix: Option<Prefix>) -> KVBatch {
         //New map to store KV pairs
         let mut map = KVMap::new();
 
@@ -415,10 +425,10 @@ impl<D: MerkleDB> ChainState<D> {
             },
         );
 
-        if with_version {
+        if let Some(prefix) = prefix {
             let kvs: Vec<_> = map
                 .into_iter()
-                .map(|(k, v)| (Self::base_key(&k), v))
+                .map(|(k, v)| (prefix.push(&k).as_ref().to_vec(), v))
                 .collect();
             kvs
         } else {
@@ -464,8 +474,6 @@ impl<D: MerkleDB> ChainState<D> {
             return Ok(result);
         }
 
-        // TODO: search in snapshots
-
         // Search it in Baseline
         let key = Self::base_key(key);
         if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
@@ -488,7 +496,10 @@ impl<D: MerkleDB> ChainState<D> {
         }
 
         //Get batch for state at H = current_height - ver_window
-        let mut batch = self.build_state(current_height - self.ver_window, true);
+        let mut batch = self.build_state(
+            current_height - self.ver_window,
+            Some(Self::base_key_prefix()),
+        );
         // Update aux version if needed
         if self.version != CUR_AUX_VERSION {
             batch.push((
