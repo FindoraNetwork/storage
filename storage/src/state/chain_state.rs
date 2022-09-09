@@ -175,22 +175,23 @@ impl<D: MerkleDB> ChainState<D> {
 
         //Build range keys for window limits
         let pruning_height = Self::height_str(height - self.ver_window - 1);
-        let old_window_limit = Prefix::new("VER".as_bytes()).push(pruning_height.as_bytes());
+        let pruning_prefix = Prefix::new("VER".as_bytes()).push(pruning_height.as_bytes());
 
         // move key-value pairs of left window side to baseline
         self.iterate_aux(
-            &old_window_limit.begin(),
-            &old_window_limit.end(),
+            &pruning_prefix.begin(),
+            &pruning_prefix.end(),
             IterOrder::Asc,
             &mut |(k, v)| -> bool {
                 let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
                 if raw_key.is_empty() {
                     return false;
                 }
-                //If the value of this key is a TOMBSTONE then we don't need to add it
+                // Merge(update/remove) to baseline
                 if v.ne(&TOMBSTONE) {
-                    // Add the key to baseline
                     batch.push((Self::base_key(raw_key.as_bytes()), Some(v)));
+                } else {
+                    batch.push((Self::base_key(raw_key.as_bytes()), None));
                 }
                 //Delete the key from the batch
                 batch.push((k, None));
@@ -340,18 +341,17 @@ impl<D: MerkleDB> ChainState<D> {
         Ok(0u64)
     }
 
-    /// Build key Prefixed with Version height for Auxiliary data
-    pub fn versioned_key(key: &[u8], height: u64) -> Vec<u8> {
-        Prefix::new("VER".as_bytes())
-            .push(Self::height_str(height).as_bytes())
-            .push(key)
-            .as_ref()
-            .to_vec()
-    }
-
     /// Build a prefix for a versioned key
     pub fn versioned_key_prefix(height: u64) -> Prefix {
         Prefix::new("VER".as_bytes()).push(Self::height_str(height).as_bytes())
+    }
+
+    /// Build key Prefixed with Version height for Auxiliary data
+    pub fn versioned_key(key: &[u8], height: u64) -> Vec<u8> {
+        Self::versioned_key_prefix(height)
+            .push(key)
+            .as_ref()
+            .to_vec()
     }
 
     /// Build a height string for versioning history
@@ -366,11 +366,7 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// build key Prefixed with Baseline for Auxiliary data
     pub fn base_key(key: &[u8]) -> Vec<u8> {
-        Prefix::new("BASE".as_bytes())
-            .push(Self::height_str(0).as_bytes())
-            .push(key)
-            .as_ref()
-            .to_vec()
+        Self::base_key_prefix().push(key).as_ref().to_vec()
     }
 
     /// Deconstruct versioned key and return parsed raw key
@@ -398,6 +394,10 @@ impl<D: MerkleDB> ChainState<D> {
     /// Build the chain-state from height 1 to height H
     ///
     /// Returns a batch with KV pairs valid at height H
+    ///
+    /// The fn is NOT building a full chainstate any more after BASE introduced, it's now just building the delta
+    /// - Option-1: Considering renaming as `build_state_delta()` in future
+    /// - Option-2: Considering add a flag `delta_or_full` parameter in future
     pub fn build_state(&self, height: u64, prefix: Option<Prefix>) -> KVBatch {
         //New map to store KV pairs
         let mut map = KVMap::new();
@@ -457,30 +457,25 @@ impl<D: MerkleDB> ChainState<D> {
             lower_bound = cur_height.saturating_sub(self.ver_window);
         }
         //Iterate in descending order from upper bound until a value is found
-        let mut result = None;
         for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
             let key = Self::versioned_key(key, h);
-            //Found a value matching key pattern, assign to result and break
+            // Return if found a value matching key pattern
             if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
                 if val.eq(&TOMBSTONE) {
-                    break;
+                    return Ok(None);
+                } else {
+                    return Ok(Some(val));
                 }
-                result = Some(val);
-                break;
             }
         }
 
-        if result.is_some() {
-            return Ok(result);
-        }
-
-        // Search it in Baseline
+        // Search it in baseline if never versioned
         let key = Self::base_key(key);
         if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
-            result = Some(val);
+            Ok(Some(val))
+        } else {
+            Ok(None)
         }
-
-        Ok(result)
     }
 
     /// When creating a new chain-state instance, any residual aux data outside the current window
