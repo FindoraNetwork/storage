@@ -86,16 +86,6 @@ impl<D: MerkleDB> ChainState<D> {
         Ok(0x00)
     }
 
-    /// Update or Set aux database version
-    ///
-    pub fn set_aux_version(&mut self, version: u8) -> Result<()> {
-        let batch = vec![(AUX_VERSION.to_vec(), Some(version.to_string().into_bytes()))];
-
-        self.db.commit(batch, true).c(d!())?;
-
-        Ok(())
-    }
-
     /// Iterates MerkleDB for a given range of keys.
     ///
     /// Executes a closure passed as a parameter with the corresponding key value pairs.
@@ -263,42 +253,6 @@ impl<D: MerkleDB> ChainState<D> {
         Ok((self.root_hash(), height))
     }
 
-    fn export_base(&self, cs: &mut Self, height: u64) -> Result<()> {
-        let mut kvs = KVMap::new();
-
-        // setup bounds
-        let base = Prefix::new("BASE".as_bytes()).push(format!("{:020}", 0).as_bytes());
-
-        // collect commits on this height
-        self.iterate_aux(
-            &base.begin(),
-            &base.end(),
-            IterOrder::Asc,
-            &mut |(k, v)| -> bool {
-                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
-                if raw_key.is_empty() {
-                    return false;
-                }
-
-                if v.eq(&TOMBSTONE) {
-                    kvs.insert(raw_key.as_bytes().to_vec(), None);
-                } else {
-                    kvs.insert(raw_key.as_bytes().to_vec(), Some(v));
-                }
-                false
-            },
-        );
-
-        // commit this batch
-        let batch = kvs.into_iter().collect::<Vec<_>>();
-        if cs.commit(batch, height, true).is_err() {
-            let msg = format!("Replay failed on height {}", height);
-            return Err(eg!(msg));
-        }
-
-        Ok(())
-    }
-
     /// Export a copy of chain state on a specific height.
     ///
     /// * `cs` - The target chain state that holds the copy.
@@ -309,12 +263,6 @@ impl<D: MerkleDB> ChainState<D> {
     pub fn export(&self, cs: &mut Self, height: u64) -> Result<()> {
         // Height must be in version window
         let cur_height = self.height().c(d!())?;
-        if cur_height < self.ver_window + 1 {
-            return Err(eg!(format!(
-                "current height {} must bigger than ver_window {}",
-                cur_height, self.ver_window
-            )));
-        }
         let ver_range = (cur_height - self.ver_window)..=cur_height;
         if !ver_range.contains(&height) {
             return Err(eg!(format!(
@@ -322,10 +270,6 @@ impl<D: MerkleDB> ChainState<D> {
                 ver_range.start(),
                 ver_range.end()
             )));
-        }
-
-        if self.version == CUR_AUX_VERSION {
-            self.export_base(cs, cur_height - self.ver_window - 1)?;
         }
 
         // Replay historical commit, if any, on every height
@@ -413,7 +357,7 @@ impl<D: MerkleDB> ChainState<D> {
     /// build key Prefixed with Multi-Baseline for Auxiliary data
     pub fn base_key(key: &[u8]) -> Vec<u8> {
         Prefix::new("BASE".as_bytes())
-            .push(format!("{:020}", 0).as_bytes())
+            .push(Self::height_str(0).as_bytes())
             .push(key)
             .as_ref()
             .to_vec()
@@ -525,10 +469,6 @@ impl<D: MerkleDB> ChainState<D> {
         // Search it in Baseline
         let key = Self::base_key(key);
         if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
-            if val.eq(&TOMBSTONE) {
-                //TODO: double-check if could be None here
-                return Ok(None);
-            }
             result = Some(val);
         }
 
@@ -561,7 +501,7 @@ impl<D: MerkleDB> ChainState<D> {
             println!("error building base chain state");
             return;
         }
-        //Read back Update in-memory flag
+        // Read back to make sure previous commit works well and update in-memory field
         self.version = self.get_aux_version().expect("cannot read back version");
 
         //Define upper and lower bounds for iteration
