@@ -188,10 +188,11 @@ impl<D: MerkleDB> ChainState<D> {
                     return false;
                 }
                 // Merge(update/remove) to baseline
+                let base_key = Self::base_key(raw_key.as_bytes());
                 if v.ne(&TOMBSTONE) {
-                    batch.push((Self::base_key(raw_key.as_bytes()), Some(v)));
-                } else {
-                    batch.push((Self::base_key(raw_key.as_bytes()), None));
+                    batch.push((base_key, Some(v)));
+                } else if self.exists_aux(&base_key).unwrap_or(false) {
+                    batch.push((base_key, None));
                 }
                 //Delete the key from the batch
                 batch.push((k, None));
