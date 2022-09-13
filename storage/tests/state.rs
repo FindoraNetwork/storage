@@ -393,6 +393,11 @@ fn test_prune_aux_batch() {
             batch.push((b"random_key".to_vec(), Some(b"random-value".to_vec())));
         }
 
+        //Add a KV to the batch at height 10
+        if i == 10 {
+            batch.push((b"random10_key".to_vec(), Some(b"random10-value".to_vec())));
+        }
+
         //Commit the new batch
         let _ = cs.commit(batch, i as u64, false);
 
@@ -407,12 +412,18 @@ fn test_prune_aux_batch() {
         }
     }
 
-    //Make sure random key is found within the current window.
-    //This will be current height - window size = 10 in this case.
+    //Make sure `random` key is found in the base.
+    //Current height is 20, the ver_window size is 10, the versioned window is [10, 20]
+    //And the `random` kv pair is inserted at height 5, it must be moved to the base.
     assert_eq!(
-        cs.get_aux(ChainState::<TempFinDB>::versioned_key(b"random_key", 10).as_slice())
+        cs.get_aux(ChainState::<TempFinDB>::base_key(b"random_key").as_slice())
             .unwrap(),
         Some(b"random-value".to_vec())
+    );
+    assert_eq!(
+        cs.get_aux(ChainState::<TempFinDB>::versioned_key(b"random10_key", 10).as_slice())
+            .unwrap(),
+        Some(b"random10-value".to_vec())
     );
 
     //Query aux values that are older than the window size to confirm batches were pruned
@@ -468,7 +479,7 @@ fn test_build_state() {
     );
 
     let built_batch: Vec<_> = cs
-        .build_state(20, true)
+        .build_state(20, Some(ChainState::<TempFinDB>::versioned_key_prefix(20)))
         .iter()
         .map(|(k, v)| {
             (
