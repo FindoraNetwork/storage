@@ -61,6 +61,15 @@ impl<D: MerkleDB> State<D> {
         }
     }
 
+    /// Creates a State at specific height
+    pub fn state_at(&self, height: u64) -> Result<Self> {
+        let cs = self.chain_state.read().state_at(height)?;
+        Ok(State {
+            chain_state: Arc::new(RwLock::new(cs)),
+            cache: SessionedCache::new(self.cache.is_merkle()),
+        })
+    }
+
     /// Returns the chain state of the store.
     pub fn chain_state(&self) -> Arc<RwLock<ChainState<D>>> {
         self.chain_state.clone()

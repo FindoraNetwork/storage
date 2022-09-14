@@ -60,6 +60,12 @@ impl<D: MerkleDB> ChainState<D> {
         cs
     }
 
+    /// Create a new instance of the ChainState at specific height
+    ///
+    pub fn state_at(&self, _height: u64) -> Result<Self> {
+        todo!()
+    }
+
     /// Gets a value for the given key from the primary data section in RocksDB
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.db.get(key)
