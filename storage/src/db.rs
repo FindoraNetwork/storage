@@ -9,6 +9,7 @@ pub type KVEntry = (StoreKey, Option<Vec<u8>>);
 pub type KVBatch = Vec<KVEntry>;
 pub type DbIter<'a> = Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + 'a>;
 
+#[derive(Debug)]
 pub enum IterOrder {
     Asc,
     Desc,
@@ -34,6 +35,7 @@ pub trait MerkleDB {
 
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue;
 
+    #[inline]
     fn as_mut(&mut self) -> &mut Self {
         self
     }

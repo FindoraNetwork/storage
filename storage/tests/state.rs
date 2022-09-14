@@ -1,10 +1,14 @@
+#[cfg(test)]
+mod chain_state;
+
 use fin_db::{FinDB, RocksDB};
 use mem_db::MemoryDB;
+use parking_lot::RwLock;
 use rand::Rng;
-use std::thread;
+use std::{sync::Arc, thread};
 use storage::{
     db::{IterOrder, KVBatch, KValue, MerkleDB},
-    state::ChainState,
+    state::{ChainState, State},
     store::Prefix,
 };
 use temp_db::{TempFinDB, TempRocksDB};
@@ -826,4 +830,108 @@ fn test_snapshot() {
     // clean up snapshot 1
     let snap_path_1 = format!("{}_{}_snap", path, 1);
     let _ = TempFinDB::open(snap_path_1).expect("failed to open db snapshot");
+}
+
+#[test]
+fn test_state_at() {
+    let fdb = TempFinDB::new().expect("failed to create fin db");
+    let chain = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string(), 2)));
+    let state = State::new(chain.clone(), true);
+
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v110".to_vec())),
+                (b"k20".to_vec(), Some(b"v120".to_vec())),
+            ],
+            1,
+            true,
+        )
+        .is_ok());
+
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v210".to_vec())),
+                (b"k20".to_vec(), Some(b"v220".to_vec())),
+            ],
+            2,
+            true,
+        )
+        .is_ok());
+
+    let state_1 = state
+        .state_at(1)
+        .expect("failed to create state at height 1");
+
+    let state_2 = state
+        .state_at(2)
+        .expect("failed to create state at height 2");
+
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v310".to_vec())),
+                (b"k20".to_vec(), Some(b"v320".to_vec())),
+            ],
+            3,
+            true,
+        )
+        .is_ok());
+
+    assert!(state_1
+        .get(b"k10")
+        .map_or(false, |v| v == Some(b"v110".to_vec())));
+
+    drop(state_1);
+
+    assert!(state
+        .get(b"k10")
+        .map_or(false, |v| v == Some(b"v310".to_vec())));
+
+    assert!(state_2
+        .get(b"k10")
+        .map_or(false, |v| v == Some(b"v210".to_vec())));
+    drop(state_2);
+
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v410".to_vec())),
+                (b"k20".to_vec(), Some(b"v420".to_vec())),
+            ],
+            4,
+            true,
+        )
+        .is_ok());
+
+    assert!(state
+        .get_ver(b"k10", 1)
+        .map_or(false, |v| v == Some(b"v110".to_vec())));
+    assert!(state
+        .get_ver(b"k10", 2)
+        .map_or(false, |v| v == Some(b"v210".to_vec())));
+
+    // Keys at height 2 are moved to base after this commit
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v510".to_vec())),
+                (b"k20".to_vec(), Some(b"v520".to_vec())),
+            ],
+            5,
+            true,
+        )
+        .is_ok());
+
+    // Keys at height 1 is in base now and override by height 2
+    assert!(state.get_ver(b"k10", 1).is_err());
+    assert!(state
+        .get_ver(b"k10", 2)
+        .map_or(false, |v| v == Some(b"v210".to_vec())));
 }

@@ -202,9 +202,8 @@ impl SessionedCache {
             return true;
         }
         for delta in self.stack.iter().rev() {
-            match delta.get(key).map(|v| v.is_none()) {
-                Some(v) => return v,
-                None => {}
+            if let Some(v) = delta.get(key).map(|v| v.is_none()) {
+                return v;
             }
         }
         if self.base.get(key) == Some(&None) {
