@@ -8,8 +8,9 @@ use crate::{
     state::cache::KVMap,
     store::Prefix,
 };
+use parking_lot::RwLock;
 use ruc::*;
-use std::{ops::Range, path::Path, str};
+use std::{ops::Range, path::Path, str, sync::Arc};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
@@ -28,8 +29,9 @@ pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 pub struct ChainState<D: MerkleDB> {
     name: String,
     ver_window: u64,
+    height_cap: Option<u64>,
     version: u64,
-    db: D,
+    db: Arc<RwLock<D>>,
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -49,8 +51,9 @@ impl<D: MerkleDB> ChainState<D> {
         let mut cs = ChainState {
             name: db_name,
             ver_window,
+            height_cap: None,
             version: Default::default(),
-            db,
+            db: Arc::new(RwLock::new(db)),
         };
 
         cs.version = cs.get_aux_version().expect("Need a valid version");
@@ -62,20 +65,32 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// Create a new instance of the ChainState at specific height
     ///
-    pub fn state_at(&self, _height: u64) -> Result<Self> {
-        todo!()
+    pub fn state_at(&self, height: u64) -> Result<Self> {
+        Ok(Self {
+            name: self.name.clone(),
+            ver_window: self.ver_window,
+            height_cap: Some(height),
+            version: self.version,
+            db: self.db.clone(),
+        })
     }
 
     /// Gets a value for the given key from the primary data section in RocksDB
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.db.get(key)
+        if self.height_cap.is_none() {
+            return self.db.read().get(key);
+        }
+        Err(eg!("not supported!"))
     }
 
     /// Gets a value for the given key from the auxiliary data section in RocksDB.
     ///
     /// This section of data is not used for root hash calculations.
     pub fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.db.get_aux(key)
+        if self.height_cap.is_none() {
+            return self.db.read().get_aux(key);
+        }
+        Err(eg!("not supported!"))
     }
 
     /// Get aux database version
@@ -103,7 +118,8 @@ impl<D: MerkleDB> ChainState<D> {
         func: &mut dyn FnMut(KValue) -> bool,
     ) -> bool {
         // Get DB iterator
-        let mut db_iter = self.db.iter(lower, upper, order);
+        let db = self.db.read();
+        let mut db_iter = db.iter(lower, upper, order);
         let mut stop = false;
 
         // Loop through each entry in range
@@ -113,7 +129,7 @@ impl<D: MerkleDB> ChainState<D> {
                 None => break,
             };
 
-            let entry = self.db.decode_kv(kv_pair);
+            let entry = db.decode_kv(kv_pair);
             stop = func(entry);
         }
         true
@@ -130,7 +146,8 @@ impl<D: MerkleDB> ChainState<D> {
         func: &mut dyn FnMut(KValue) -> bool,
     ) -> bool {
         // Get DB iterator
-        let mut db_iter = self.db.iter_aux(lower, upper, order);
+        let db = self.db.read();
+        let mut db_iter = db.iter_aux(lower, upper, order);
         let mut stop = false;
 
         // Loop through each entry in range
@@ -252,11 +269,14 @@ impl<D: MerkleDB> ChainState<D> {
         height: u64,
         flush: bool,
     ) -> Result<(Vec<u8>, u64)> {
+        if self.height_cap.is_some() {
+            return Err(eg!("not supported"));
+        }
         batch.sort();
         let aux = self.build_aux_batch(height, &batch).c(d!())?;
 
-        self.db.put_batch(batch).c(d!())?;
-        self.db.commit(aux, flush).c(d!())?;
+        self.db.write().put_batch(batch).c(d!())?;
+        self.db.write().commit(aux, flush).c(d!())?;
 
         Ok((self.root_hash(), height))
     }
@@ -324,12 +344,12 @@ impl<D: MerkleDB> ChainState<D> {
     /// * `path` - The path of database that holds the snapshot.
     ///
     pub fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        self.db.snapshot(path)
+        self.db.read().snapshot(path)
     }
 
     /// Calculate and returns current root hash of the Merkle tree
     pub fn root_hash(&self) -> Vec<u8> {
-        let hash = self.db.root_hash();
+        let hash = self.db.read().root_hash();
         if hash == NULL_HASH {
             return vec![];
         }
@@ -338,7 +358,7 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// Returns current height of the ChainState
     pub fn height(&self) -> Result<u64> {
-        let height = self.db.get_aux(HEIGHT_KEY).c(d!())?;
+        let height = self.db.read().get_aux(HEIGHT_KEY).c(d!())?;
         if let Some(value) = height {
             let height_str = String::from_utf8(value).c(d!())?;
             let last_height = height_str.parse::<u64>().c(d!())?;
@@ -488,6 +508,9 @@ impl<D: MerkleDB> ChainState<D> {
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
     fn clean_aux_db(&mut self) {
+        if self.height_cap.is_some() {
+            return;
+        }
         //Get current height
         let current_height = self.height().unwrap_or(0);
         if current_height == 0 {
@@ -510,7 +533,7 @@ impl<D: MerkleDB> ChainState<D> {
             ));
         }
         //Commit this batch at base height H
-        if self.db.commit(batch, true).is_err() {
+        if self.db.write().commit(batch, true).is_err() {
             println!("error building base chain state");
             return;
         }
@@ -538,7 +561,7 @@ impl<D: MerkleDB> ChainState<D> {
         );
 
         //commit aux batch
-        let _ = self.db.commit(batch, true);
+        let _ = self.db.write().commit(batch, true);
     }
 
     /// Gets current versioning range of the chain-state

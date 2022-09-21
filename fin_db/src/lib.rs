@@ -21,6 +21,8 @@ pub fn to_batch<I: IntoIterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(items: I) ->
 
 pub struct FinDB {
     db: Merk,
+    ro: bool,
+    path: PathBuf,
 }
 
 impl FinDB {
@@ -28,8 +30,12 @@ impl FinDB {
     ///
     /// path, one will be created.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<FinDB> {
-        let db = Merk::open(path).map_err(|_| eg!("Failed to open db"))?;
-        Ok(Self { db })
+        let db = Merk::open(&path).map_err(|_| eg!("Failed to open db"))?;
+        Ok(Self {
+            db,
+            ro: false,
+            path: path.as_ref().to_path_buf(),
+        })
     }
 
     /// Closes db and deletes all data from disk.
@@ -64,6 +70,10 @@ impl MerkleDB for FinDB {
 
     /// Puts a batch of KVs
     fn put_batch(&mut self, kvs: KVBatch) -> Result<()> {
+        if self.ro {
+            return Err(eg!("write to readonly db"));
+        }
+
         let batch = to_batch(kvs);
         self.db
             .apply(batch.as_ref())
@@ -96,6 +106,10 @@ impl MerkleDB for FinDB {
 
     /// Commits changes.
     fn commit(&mut self, aux: KVBatch, flush: bool) -> Result<()> {
+        if self.ro {
+            return Err(eg!("write to readonly db"));
+        }
+
         let batch_aux = to_batch(aux);
         self.db
             .commit(batch_aux.as_ref())
@@ -120,6 +134,17 @@ impl MerkleDB for FinDB {
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         let kv = Tree::decode(kv_pair.0.to_vec(), &kv_pair.1);
         (kv.key().to_vec(), kv.value().to_vec())
+    }
+
+    /// clone
+    fn duplicate(&self) -> Self {
+        let db = Merk::open(&self.path).expect("Failed to open db for duplication");
+
+        Self {
+            db,
+            ro: true,
+            path: self.path.clone(),
+        }
     }
 }
 
@@ -272,5 +297,10 @@ impl MerkleDB for RocksDB {
     /// Decode key value pair
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         (kv_pair.0.to_vec(), kv_pair.1.to_vec())
+    }
+
+    /// clone
+    fn duplicate(&self) -> Self {
+        self.clone()
     }
 }

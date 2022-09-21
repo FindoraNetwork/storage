@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use storage::db::{DbIter, IterOrder, KVBatch, KValue, MerkleDB};
 
 /// Wraps a Findora db instance and deletes it from disk it once it goes out of scope.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct MemoryDB {
     temp: PathBuf,
     cache: BTreeMap<Box<[u8]>, Option<Box<[u8]>>>,
@@ -141,6 +141,10 @@ impl MerkleDB for MemoryDB {
 
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         (kv_pair.0.to_vec(), kv_pair.1.to_vec())
+    }
+
+    fn duplicate(&self) -> Self {
+        (*self).clone()
     }
 }
 
