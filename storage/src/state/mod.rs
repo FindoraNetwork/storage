@@ -141,7 +141,7 @@ impl<D: MerkleDB> State<D> {
     }
 
     /// Iterates the cache for a given prefix
-    pub fn iterate_cache(&self, prefix: &[u8], map: &mut KVecMap) {
+    pub(crate) fn iterate_cache(&self, prefix: &[u8], map: &mut KVecMap) {
         self.cache.iter_prefix(prefix, map);
     }
 

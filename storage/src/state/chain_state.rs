@@ -65,7 +65,7 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// Create a new instance of the ChainState at specific height
     ///
-    pub fn state_at(&self, height: u64) -> Result<Self> {
+    pub(crate) fn state_at(&self, height: u64) -> Result<Self> {
         Ok(Self {
             name: self.name.clone(),
             ver_window: self.ver_window,
@@ -77,26 +77,24 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// Gets a value for the given key from the primary data section in RocksDB
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if self.height_cap.is_none() {
-            return self.db.read().get(key);
+        if let Some(height) = self.height_cap {
+            self.get_ver(key, height)
+        } else {
+            self.db.read().get(key)
         }
-        Err(eg!("not supported!"))
     }
 
     /// Gets a value for the given key from the auxiliary data section in RocksDB.
     ///
     /// This section of data is not used for root hash calculations.
     pub fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if self.height_cap.is_none() {
-            return self.db.read().get_aux(key);
-        }
-        Err(eg!("not supported!"))
+        self.db.read().get_aux(key)
     }
 
     /// Get aux database version
     ///
     /// The default version is ox00
-    pub fn get_aux_version(&self) -> Result<u64> {
+    fn get_aux_version(&self) -> Result<u64> {
         if let Some(version) = self.get_aux(AUX_VERSION.to_vec().as_ref())? {
             let ver_str = String::from_utf8(version).c(d!("Invalid aux version string"))?;
             return ver_str
@@ -387,7 +385,7 @@ impl<D: MerkleDB> ChainState<D> {
     }
 
     /// Build a prefix for a base key
-    pub fn base_key_prefix() -> Prefix {
+    pub(crate) fn base_key_prefix() -> Prefix {
         Prefix::new("BASE".as_bytes()).push(Self::height_str(0).as_bytes())
     }
 
@@ -406,16 +404,6 @@ impl<D: MerkleDB> ChainState<D> {
             return Err(eg!("invalid key pattern"));
         }
         Ok(key[2..].join(SPLIT_BGN))
-    }
-
-    /// Returns the Name of the ChainState
-    pub fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    /// This function will prune the tree of spent transaction outputs to reduce memory usage
-    pub fn prune_tree() {
-        unimplemented!()
     }
 
     /// Build the chain-state from height 1 to height H
