@@ -18,3 +18,4 @@ mem_db = { path = "../mem_db", version = "0.2" }
 
 [features]
 iterator = []
+optimize_get_ver = []
