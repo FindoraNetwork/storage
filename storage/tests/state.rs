@@ -13,13 +13,13 @@ const VER_WINDOW: u64 = 100;
 /// create chain state of `FinDB`
 fn gen_cs(path: String) -> ChainState<TempFinDB> {
     let fdb = TempFinDB::open(path).expect("failed to open findb");
-    ChainState::new(fdb, "test_db".to_string(), VER_WINDOW)
+    ChainState::new(fdb, "test_db".to_string(), VER_WINDOW, false)
 }
 
 /// create chain state of `RocksDB`
 fn gen_cs_rocks(path: String) -> ChainState<TempRocksDB> {
     let fdb = TempRocksDB::open(path).expect("failed to open rocksdb");
-    ChainState::new(fdb, "test_db".to_string(), 0)
+    ChainState::new(fdb, "test_db".to_string(), 0, false)
 }
 
 #[test]
@@ -341,7 +341,7 @@ fn test_height_rocks() {
 fn test_build_aux_batch() {
     let path = thread::current().name().unwrap().to_owned();
     let fdb = TempFinDB::open(path).expect("failed to open db");
-    let mut cs = ChainState::new(fdb, "test_db".to_string(), 10);
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 10, false);
 
     let number_of_batches = 21;
     let batch_size = 7;
@@ -374,7 +374,7 @@ fn test_build_aux_batch() {
 fn test_prune_aux_batch() {
     let path = thread::current().name().unwrap().to_owned();
     let fdb = TempFinDB::open(path).expect("failed to open db");
-    let mut cs = ChainState::new(fdb, "test_db".to_string(), 10);
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 10, false);
 
     let number_of_batches = 21;
     let batch_size = 7;
@@ -439,7 +439,7 @@ fn test_prune_aux_batch() {
 fn test_build_state() {
     let path = thread::current().name().unwrap().to_owned();
     let fdb = TempFinDB::open(path).expect("failed to open db");
-    let mut cs = ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), VER_WINDOW, false);
 
     let mut rng = rand::thread_rng();
     let mut keys = Vec::with_capacity(10);
@@ -499,7 +499,7 @@ fn test_clean_aux_db() {
     //Create new Chain State with new database
     let path = thread::current().name().unwrap().to_owned();
     let fdb = FinDB::open(path.clone()).expect("failed to open db");
-    let mut cs = ChainState::new(fdb, "test_db".to_string(), 10);
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 10, false);
     let number_of_batches = 21;
     let batch_size = 7;
 
@@ -521,7 +521,7 @@ fn test_clean_aux_db() {
     std::mem::drop(cs);
     let new_window_size = 5;
     let fdb_new = TempFinDB::open(path).expect("failed to open db");
-    let cs_new = ChainState::new(fdb_new, "test_db".to_string(), new_window_size);
+    let cs_new = ChainState::new(fdb_new, "test_db".to_string(), new_window_size, false);
 
     //Confirm keys older than new window size have been deleted
     for i in 1..(number_of_batches - new_window_size - 1) {
@@ -619,13 +619,13 @@ fn export_n_compare(cs: &mut ChainState<TempFinDB>, path: String, height: u64) {
     // export
     let exp_path = format!("{}_{}_exp", path, height);
     let exp_fdb = TempFinDB::open(exp_path).expect("failed to open db export");
-    let mut exp_cs = ChainState::new(exp_fdb, "test_db".to_string(), 5);
+    let mut exp_cs = ChainState::new(exp_fdb, "test_db".to_string(), 5, false);
     cs.export(&mut exp_cs, height).unwrap();
 
     // open corresponding snapshot
     let snap_path = format!("{}_{}_snap", path, height);
     let snap_fdb = TempFinDB::open(snap_path).expect("failed to open db snapshot");
-    let snap_cs = ChainState::new(snap_fdb, "test_db".to_string(), 5);
+    let snap_cs = ChainState::new(snap_fdb, "test_db".to_string(), 5, false);
 
     // compare height and KVs.
     //We can't expect same root hash when state is built on truncated commit history
@@ -644,7 +644,7 @@ fn test_snapshot() {
     //Create new Chain State with new database
     let path = thread::current().name().unwrap().to_owned();
     let fdb = TempFinDB::open(path.clone()).expect("failed to open db");
-    let mut cs = ChainState::new(fdb, "test_db".to_string(), 5);
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 5, false);
 
     // commit block 1 and take snapshot 1
     commit_n_snapshot(
@@ -724,7 +724,7 @@ fn test_snapshot() {
     // export on invalid heights
     let exp_path = format!("{}_exp", path);
     let exp_fdb = TempFinDB::open(exp_path).expect("failed to open db export");
-    let mut snap_cs = ChainState::new(exp_fdb, "test_db".to_string(), 5);
+    let mut snap_cs = ChainState::new(exp_fdb, "test_db".to_string(), 5, false);
     assert!(cs.export(&mut snap_cs, 0).is_err());
     assert!(cs.export(&mut snap_cs, 7).is_err());
 

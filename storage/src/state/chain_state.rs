@@ -40,7 +40,7 @@ impl<D: MerkleDB> ChainState<D> {
     /// MerkleDB trait is assigned.
     ///
     /// Returns the implicit struct
-    pub fn new(db: D, name: String, ver_window: u64) -> Self {
+    pub fn new(db: D, name: String, ver_window: u64, is_fresh: bool) -> Self {
         let mut db_name = String::from("chain-state");
         if !name.is_empty() {
             db_name = name;
@@ -56,6 +56,10 @@ impl<D: MerkleDB> ChainState<D> {
         cs.version = cs.get_aux_version().expect("Need a valid version");
 
         cs.clean_aux_db();
+
+        if is_fresh {
+            cs.db.clean_aux().unwrap();
+        }
 
         cs
     }
