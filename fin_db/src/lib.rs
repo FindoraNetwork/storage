@@ -1,4 +1,8 @@
-use fmerk::{rocksdb, tree::Tree, BatchEntry, Merk, Op};
+use fmerk::{
+    rocksdb::{self, IteratorMode},
+    tree::Tree,
+    BatchEntry, Merk, Op,
+};
 use ruc::*;
 use std::path::{Path, PathBuf};
 use storage::db::{DbIter, IterOrder, KVBatch, KValue, MerkleDB};
@@ -120,6 +124,10 @@ impl MerkleDB for FinDB {
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         let kv = Tree::decode(kv_pair.0.to_vec(), &kv_pair.1);
         (kv.key().to_vec(), kv.value().to_vec())
+    }
+
+    fn clean_aux(&mut self) -> Result<()> {
+        self.db.clean_aux().map_err(|e| eg!(e))
     }
 }
 
@@ -272,5 +280,20 @@ impl MerkleDB for RocksDB {
     /// Decode key value pair
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         (kv_pair.0.to_vec(), kv_pair.1.to_vec())
+    }
+
+    fn clean_aux(&mut self) -> Result<()> {
+        let state_cf = self.db.cf_handle(CF_STATE).unwrap();
+        let mut batch = rocksdb::WriteBatch::default();
+        for (key, _) in self.db.iterator_cf(state_cf, IteratorMode::Start) {
+            batch.delete_cf(state_cf, key);
+        }
+
+        let mut opts = rocksdb::WriteOptions::default();
+        opts.set_sync(false);
+        self.db.write_opt(batch, &opts).c(d!())?;
+        self.db.flush_cf(state_cf).c(d!())?;
+
+        Ok(())
     }
 }

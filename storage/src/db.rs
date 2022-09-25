@@ -37,4 +37,6 @@ pub trait MerkleDB {
     fn as_mut(&mut self) -> &mut Self {
         self
     }
+
+    fn clean_aux(&mut self) -> Result<()>;
 }
