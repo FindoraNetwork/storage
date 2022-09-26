@@ -462,7 +462,7 @@ impl<D: MerkleDB> ChainState<D> {
 
         // Iterate in descending order from upper bound until a value is found
         let mut val: Result<Option<Vec<u8>>> = Ok(None);
-        let mut res = false;
+        let mut stop = false;
         let lower_key = Self::versioned_key(key, lower_bound);
         let upper_key = Self::versioned_key(key, upper_bound.saturating_add(1));
         let _ = self.iterate_aux(&lower_key, &upper_key, IterOrder::Desc, &mut |(
@@ -475,35 +475,22 @@ impl<D: MerkleDB> ChainState<D> {
                         if !v.eq(&TOMBSTONE) {
                             val = Ok(Some(v));
                         }
-                        res = true;
+                        stop = true;
                         return true;
                     }
-                    return false;
+                    false
                 }
                 Err(e) => {
                     val = Err(e).c(d!("error reading aux value"));
-                    res = true;
-                    return true;
+                    stop = true;
+                    true
                 }
             }
         });
 
-        if res {
+        if stop {
             return val;
         }
-
-        // //Iterate in descending order from upper bound until a value is found
-        // for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
-        //     let key = Self::versioned_key(key, h);
-        //     // Return if found a value matching key pattern
-        //     if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
-        //         if val.eq(&TOMBSTONE) {
-        //             return Ok(None);
-        //         } else {
-        //             return Ok(Some(val));
-        //         }
-        //     }
-        // }
 
         // Search it in baseline if never versioned
         let key = Self::base_key(key);
@@ -536,38 +523,6 @@ impl<D: MerkleDB> ChainState<D> {
         if cur_height > self.ver_window {
             lower_bound = cur_height.saturating_sub(self.ver_window);
         }
-
-        // // Iterate in descending order from upper bound until a value is found
-        // let mut val: Result<Option<Vec<u8>>> = Ok(None);
-        // let mut res = false;
-        // let lower_key = Self::versioned_key(key, lower_bound);
-        // let upper_key = Self::versioned_key(key, upper_bound.saturating_add(1));
-        // let _ = self.iterate_aux(&lower_key, &upper_key, IterOrder::Desc, &mut |(
-        //     ver_k,
-        //     v,
-        // )| {
-        //     match Self::get_raw_versioned_key(&ver_k) {
-        //         Ok(k) => {
-        //             if k.as_bytes().eq(key) {
-        //                 if !v.eq(&TOMBSTONE) {
-        //                     val = Ok(Some(v));
-        //                 }
-        //                 res = true;
-        //                 return true;
-        //             }
-        //             return false;
-        //         }
-        //         Err(e) => {
-        //             val = Err(e).c(d!("error reading aux value"));
-        //             res = true;
-        //             return true;
-        //         }
-        //     }
-        // });
-
-        // if res {
-        //     return val;
-        // }
 
         //Iterate in descending order from upper bound until a value is found
         for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
