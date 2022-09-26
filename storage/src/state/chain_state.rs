@@ -8,9 +8,9 @@ use crate::{
     state::cache::KVMap,
     store::Prefix,
 };
-use parking_lot::RwLock;
 use ruc::*;
-use std::{ops::Range, path::Path, str, sync::Arc};
+use std::collections::BTreeMap;
+use std::{ops::Range, path::Path, str};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
@@ -27,11 +27,11 @@ pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 /// Concrete ChainState struct containing a reference to an instance of MerkleDB, a name and
 /// current tree height.
 pub struct ChainState<D: MerkleDB> {
-    name: String,
+    _name: String,
     ver_window: u64,
-    height_cap: Option<u64>,
+    pinned_height: BTreeMap<u64, u64>,
     version: u64,
-    db: Arc<RwLock<D>>,
+    db: D,
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -49,11 +49,11 @@ impl<D: MerkleDB> ChainState<D> {
         }
 
         let mut cs = ChainState {
-            name: db_name,
+            _name: db_name,
             ver_window,
-            height_cap: None,
+            pinned_height: Default::default(),
             version: Default::default(),
-            db: Arc::new(RwLock::new(db)),
+            db,
         };
 
         cs.version = cs.get_aux_version().expect("Need a valid version");
@@ -63,32 +63,38 @@ impl<D: MerkleDB> ChainState<D> {
         cs
     }
 
-    /// Create a new instance of the ChainState at specific height
+    /// Pin the ChainState at specified height
     ///
-    pub(crate) fn state_at(&self, height: u64) -> Result<Self> {
-        Ok(Self {
-            name: self.name.clone(),
-            ver_window: self.ver_window,
-            height_cap: Some(height),
-            version: self.version,
-            db: self.db.clone(),
-        })
+    pub(crate) fn pin_at(&mut self, height: u64) {
+        let entry = self.pinned_height.entry(height).or_insert(0);
+        *entry = entry.saturating_add(1);
+    }
+
+    /// Unpin the ChainState at specified height
+    ///
+    pub(crate) fn unpin_at(&mut self, height: u64) {
+        let remove = match self.pinned_height.get_mut(&height) {
+            Some(count) if *count > 0 => {
+                *count = count.saturating_sub(1);
+                *count == 0
+            }
+            _ => unreachable!(),
+        };
+        if remove {
+            assert_eq!(self.pinned_height.remove(&height), Some(0));
+        }
     }
 
     /// Gets a value for the given key from the primary data section in RocksDB
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if let Some(height) = self.height_cap {
-            self.get_ver(key, height)
-        } else {
-            self.db.read().get(key)
-        }
+        self.db.get(key)
     }
 
     /// Gets a value for the given key from the auxiliary data section in RocksDB.
     ///
     /// This section of data is not used for root hash calculations.
     pub fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.db.read().get_aux(key)
+        self.db.get_aux(key)
     }
 
     /// Get aux database version
@@ -116,8 +122,7 @@ impl<D: MerkleDB> ChainState<D> {
         func: &mut dyn FnMut(KValue) -> bool,
     ) -> bool {
         // Get DB iterator
-        let db = self.db.read();
-        let mut db_iter = db.iter(lower, upper, order);
+        let mut db_iter = self.db.iter(lower, upper, order);
         let mut stop = false;
 
         // Loop through each entry in range
@@ -127,7 +132,7 @@ impl<D: MerkleDB> ChainState<D> {
                 None => break,
             };
 
-            let entry = db.decode_kv(kv_pair);
+            let entry = self.db.decode_kv(kv_pair);
             stop = func(entry);
         }
         true
@@ -144,8 +149,7 @@ impl<D: MerkleDB> ChainState<D> {
         func: &mut dyn FnMut(KValue) -> bool,
     ) -> bool {
         // Get DB iterator
-        let db = self.db.read();
-        let mut db_iter = db.iter_aux(lower, upper, order);
+        let mut db_iter = self.db.iter_aux(lower, upper, order);
         let mut stop = false;
 
         // Loop through each entry in range
@@ -267,14 +271,11 @@ impl<D: MerkleDB> ChainState<D> {
         height: u64,
         flush: bool,
     ) -> Result<(Vec<u8>, u64)> {
-        if self.height_cap.is_some() {
-            return Err(eg!("not supported"));
-        }
         batch.sort();
         let aux = self.build_aux_batch(height, &batch).c(d!())?;
 
-        self.db.write().put_batch(batch).c(d!())?;
-        self.db.write().commit(aux, flush).c(d!())?;
+        self.db.put_batch(batch).c(d!())?;
+        self.db.commit(aux, flush).c(d!())?;
 
         Ok((self.root_hash(), height))
     }
@@ -342,12 +343,12 @@ impl<D: MerkleDB> ChainState<D> {
     /// * `path` - The path of database that holds the snapshot.
     ///
     pub fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        self.db.read().snapshot(path)
+        self.db.snapshot(path)
     }
 
     /// Calculate and returns current root hash of the Merkle tree
     pub fn root_hash(&self) -> Vec<u8> {
-        let hash = self.db.read().root_hash();
+        let hash = self.db.root_hash();
         if hash == NULL_HASH {
             return vec![];
         }
@@ -356,7 +357,7 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// Returns current height of the ChainState
     pub fn height(&self) -> Result<u64> {
-        let height = self.db.read().get_aux(HEIGHT_KEY).c(d!())?;
+        let height = self.db.get_aux(HEIGHT_KEY).c(d!())?;
         if let Some(value) = height {
             let height_str = String::from_utf8(value).c(d!())?;
             let last_height = height_str.parse::<u64>().c(d!())?;
@@ -496,9 +497,6 @@ impl<D: MerkleDB> ChainState<D> {
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
     fn clean_aux_db(&mut self) {
-        if self.height_cap.is_some() {
-            return;
-        }
         //Get current height
         let current_height = self.height().unwrap_or(0);
         if current_height == 0 {
@@ -521,7 +519,7 @@ impl<D: MerkleDB> ChainState<D> {
             ));
         }
         //Commit this batch at base height H
-        if self.db.write().commit(batch, true).is_err() {
+        if self.db.commit(batch, true).is_err() {
             println!("error building base chain state");
             return;
         }
@@ -549,7 +547,7 @@ impl<D: MerkleDB> ChainState<D> {
         );
 
         //commit aux batch
-        let _ = self.db.write().commit(batch, true);
+        let _ = self.db.commit(batch, true);
     }
 
     /// Gets current versioning range of the chain-state
