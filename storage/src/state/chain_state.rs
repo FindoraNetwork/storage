@@ -441,9 +441,11 @@ impl<D: MerkleDB> ChainState<D> {
     ///
     /// Returns the value of the given key at a particular height
     /// Returns None if the key was deleted or invalid at height H
+    #[cfg(feature = "optimize_get_ver")]
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
         //Make sure that this key exists to avoid expensive query
-        if self.get(key).c(d!("error getting value"))?.is_none() {
+        let val = self.get(key).c(d!("error getting value"))?;
+        if val.is_none() {
             return Ok(None);
         }
 
@@ -452,11 +454,76 @@ impl<D: MerkleDB> ChainState<D> {
         let upper_bound = height;
         let cur_height = self.height().c(d!("error reading current height"))?;
         if height >= cur_height {
-            return self.get(key);
+            return Ok(val);
         }
         if cur_height > self.ver_window {
             lower_bound = cur_height.saturating_sub(self.ver_window);
         }
+
+        // Iterate in descending order from upper bound until a value is found
+        let mut val: Result<Option<Vec<u8>>> = Ok(None);
+        let mut stop = false;
+        let lower_key = Self::versioned_key(key, lower_bound);
+        let upper_key = Self::versioned_key(key, upper_bound.saturating_add(1));
+        let _ = self.iterate_aux(&lower_key, &upper_key, IterOrder::Desc, &mut |(
+            ver_k,
+            v,
+        )| {
+            match Self::get_raw_versioned_key(&ver_k) {
+                Ok(k) => {
+                    if k.as_bytes().eq(key) {
+                        if !v.eq(&TOMBSTONE) {
+                            val = Ok(Some(v));
+                        }
+                        stop = true;
+                        return true;
+                    }
+                    false
+                }
+                Err(e) => {
+                    val = Err(e).c(d!("error reading aux value"));
+                    stop = true;
+                    true
+                }
+            }
+        });
+
+        if stop {
+            return val;
+        }
+
+        // Search it in baseline if never versioned
+        let key = Self::base_key(key);
+        if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
+            Ok(Some(val))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get the value of a key at a given height
+    ///
+    /// Returns the value of the given key at a particular height
+    /// Returns None if the key was deleted or invalid at height H
+    #[cfg(not(feature = "optimize_get_ver"))]
+    pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        //Make sure that this key exists to avoid expensive query
+        let val = self.get(key).c(d!("error getting value"))?;
+        if val.is_none() {
+            return Ok(None);
+        }
+
+        //Need to set lower and upper bound as the height can get very large
+        let mut lower_bound = 1;
+        let upper_bound = height;
+        let cur_height = self.height().c(d!("error reading current height"))?;
+        if height >= cur_height {
+            return Ok(val);
+        }
+        if cur_height > self.ver_window {
+            lower_bound = cur_height.saturating_sub(self.ver_window);
+        }
+
         //Iterate in descending order from upper bound until a value is found
         for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
             let key = Self::versioned_key(key, h);
