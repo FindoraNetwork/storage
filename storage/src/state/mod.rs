@@ -76,7 +76,7 @@ impl<D: MerkleDB> State<D> {
 
     /// Creates a State at specific height
     pub fn state_at(&self, height: u64) -> Result<Self> {
-        self.chain_state.write().pin_at(height);
+        self.chain_state.write().pin_at(height)?;
         Ok(State {
             chain_state: self.chain_state.clone(),
             cache: SessionedCache::new(self.cache.is_merkle()),

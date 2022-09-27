@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod chain_state;
+
 use fin_db::FinDB;
 use rand::Rng;
 use std::thread;

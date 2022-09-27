@@ -68,14 +68,26 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// Pin the ChainState at specified height
     ///
-    pub(crate) fn pin_at(&mut self, height: u64) {
+    pub fn pin_at(&mut self, height: u64) -> Result<()> {
+        let current = self.height()?;
+        if current < height {
+            return Err(eg!("pin at future height"));
+        }
+        if height < self.min_height {
+            return Err(eg!("pin at too old height"));
+        }
+        if self.ver_window == 0 {
+            return Err(eg!("pin on non-versioned chain"));
+        }
+
         let entry = self.pinned_height.entry(height).or_insert(0);
         *entry = entry.saturating_add(1);
+        Ok(())
     }
 
     /// Unpin the ChainState at specified height
     ///
-    pub(crate) fn unpin_at(&mut self, height: u64) {
+    pub fn unpin_at(&mut self, height: u64) {
         let remove = match self.pinned_height.get_mut(&height) {
             Some(count) if *count > 0 => {
                 *count = count.saturating_sub(1);
@@ -250,12 +262,19 @@ impl<D: MerkleDB> ChainState<D> {
                 .collect();
 
             // Prune Aux data in the db
-            let prune_height = if let Some(new_min) = self.pinned_height.keys().min() {
+            let upper = if let Some(new_min) = self.pinned_height.keys().min() {
                 *new_min
             } else {
                 height
             };
-            for h in self.min_height..prune_height {
+            let last_upper = self.min_height.saturating_add(self.ver_window);
+            self.min_height = if upper >= self.ver_window.saturating_add(1) {
+                upper.saturating_sub(self.ver_window)
+            } else {
+                1
+            };
+            println!("{} {}", last_upper, upper);
+            for h in last_upper..=upper {
                 self.prune_aux_batch(h, &mut aux_batch)?;
             }
         }
@@ -578,5 +597,21 @@ impl<D: MerkleDB> ChainState<D> {
             lower = upper.saturating_sub(self.ver_window);
         }
         Ok(lower..upper)
+    }
+
+    /// get current pinned height
+    ///
+    pub fn current_pinned_height(&self) -> Vec<u64> {
+        self.pinned_height.keys().cloned().collect()
+    }
+
+    /// Get current version window in database
+    pub fn current_window(&self) -> Result<(u64, u64)> {
+        if self.ver_window == 0 {
+            return Err(eg!("Not supported for an non-versioned chain"));
+        }
+        let current = self.height()?;
+
+        Ok((self.min_height, current))
     }
 }
