@@ -502,6 +502,13 @@ impl<D: MerkleDB> ChainState<D> {
         if lower_bound > self.min_height {
             lower_bound = self.min_height
         }
+
+        // The keys at querying height are moved to base and override by later height
+        // So we cannot determine version info of the querying key
+        if lower_bound > height.saturating_add(1) {
+            return Err(eg!("height too old, no versioning info"));
+        }
+
         //Iterate in descending order from upper bound until a value is found
         for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
             let key = Self::versioned_key(key, h);
