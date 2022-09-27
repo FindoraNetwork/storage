@@ -29,6 +29,8 @@ pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 pub struct ChainState<D: MerkleDB> {
     _name: String,
     ver_window: u64,
+    // the min height of the versioned keys
+    min_height: u64,
     pinned_height: BTreeMap<u64, u64>,
     version: u64,
     db: D,
@@ -51,6 +53,7 @@ impl<D: MerkleDB> ChainState<D> {
         let mut cs = ChainState {
             _name: db_name,
             ver_window,
+            min_height: 1,
             pinned_height: Default::default(),
             version: Default::default(),
             db,
@@ -232,7 +235,7 @@ impl<D: MerkleDB> ChainState<D> {
     /// prefixed to each key.
     ///
     /// This is to keep a versioned history of KV pairs.
-    fn build_aux_batch(&self, height: u64, batch: &[KVEntry]) -> Result<KVBatch> {
+    fn build_aux_batch(&mut self, height: u64, batch: &[KVEntry]) -> Result<KVBatch> {
         let mut aux_batch = KVBatch::new();
         if self.ver_window != 0 {
             // Copy keys from batch to aux batch while prefixing them with the current height
@@ -247,7 +250,14 @@ impl<D: MerkleDB> ChainState<D> {
                 .collect();
 
             // Prune Aux data in the db
-            self.prune_aux_batch(height, &mut aux_batch)?;
+            let prune_height = if let Some(new_min) = self.pinned_height.keys().min() {
+                *new_min
+            } else {
+                height
+            };
+            for h in self.min_height..prune_height {
+                self.prune_aux_batch(h, &mut aux_batch)?;
+            }
         }
 
         // Store the current height in auxiliary batch
@@ -472,6 +482,10 @@ impl<D: MerkleDB> ChainState<D> {
         if cur_height > self.ver_window {
             lower_bound = cur_height.saturating_sub(self.ver_window);
         }
+
+        if lower_bound > self.min_height {
+            lower_bound = self.min_height
+        }
         //Iterate in descending order from upper bound until a value is found
         for h in (lower_bound..upper_bound.saturating_add(1)).rev() {
             let key = Self::versioned_key(key, h);
@@ -497,6 +511,9 @@ impl<D: MerkleDB> ChainState<D> {
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
     fn clean_aux_db(&mut self) {
+        // A ChainState with pinned height, should never call this function
+        assert!(self.pinned_height.is_empty());
+
         //Get current height
         let current_height = self.height().unwrap_or(0);
         if current_height == 0 {
@@ -506,6 +523,7 @@ impl<D: MerkleDB> ChainState<D> {
             return;
         }
 
+        self.min_height = current_height - self.ver_window + 1;
         //Get batch for state at H = current_height - ver_window
         let mut batch = self.build_state(
             current_height - self.ver_window,
