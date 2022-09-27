@@ -85,10 +85,9 @@ impl<D: MerkleDB> State<D> {
     }
 
     /// Returns the chain state of the store.
-    /// ToDo: remove me if not needed
-    //pub fn chain_state(&self) -> Arc<RwLock<ChainState<D>>> {
-    //    self.chain_state.clone()
-    //}
+    pub fn chain_state(&self) -> Arc<RwLock<ChainState<D>>> {
+        self.chain_state.clone()
+    }
 
     /// Gets a value for the given key.
     ///
