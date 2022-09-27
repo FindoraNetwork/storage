@@ -262,21 +262,18 @@ impl<D: MerkleDB> ChainState<D> {
                 .collect();
 
             // Prune Aux data in the db
-            let upper = if let Some(new_min) = self.pinned_height.keys().min() {
-                *new_min
-            } else {
-                height
-            };
+            let upper = self.pinned_height.keys().min().map_or(height, |min| *min);
             let last_upper = self.min_height.saturating_add(self.ver_window);
+            for h in last_upper..=upper {
+                self.prune_aux_batch(h, &mut aux_batch)?;
+            }
+
+            // update the left side of version window
             self.min_height = if upper >= self.ver_window.saturating_add(1) {
                 upper.saturating_sub(self.ver_window)
             } else {
                 1
             };
-            println!("{} {}", last_upper, upper);
-            for h in last_upper..=upper {
-                self.prune_aux_batch(h, &mut aux_batch)?;
-            }
         }
 
         // Store the current height in auxiliary batch
