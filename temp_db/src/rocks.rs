@@ -70,10 +70,6 @@ impl MerkleDB for TempRocksDB {
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         self.deref().decode_kv(kv_pair)
     }
-
-    fn duplicate(&self) -> Self {
-        todo!()
-    }
 }
 
 impl Deref for TempRocksDB {

@@ -35,8 +35,6 @@ pub trait MerkleDB {
 
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue;
 
-    fn duplicate(&self) -> Self;
-
     #[inline]
     fn as_mut(&mut self) -> &mut Self {
         self
