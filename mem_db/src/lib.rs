@@ -142,6 +142,11 @@ impl MerkleDB for MemoryDB {
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         (kv_pair.0.to_vec(), kv_pair.1.to_vec())
     }
+
+    fn clean_aux(&mut self) -> Result<()> {
+        self.aux.clear();
+        Ok(())
+    }
 }
 
 impl Drop for MemoryDB {

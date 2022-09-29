@@ -70,6 +70,10 @@ impl MerkleDB for TempFinDB {
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         self.deref().decode_kv(kv_pair)
     }
+
+    fn clean_aux(&mut self) -> Result<()> {
+        self.deref_mut().clean_aux()
+    }
 }
 
 impl Deref for TempFinDB {
