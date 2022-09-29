@@ -523,6 +523,16 @@ impl<D: MerkleDB> ChainState<D> {
             lower_bound = cur_height.saturating_sub(self.ver_window);
         }
 
+        if lower_bound > self.min_height {
+            lower_bound = self.min_height
+        }
+
+        // The keys at querying height are moved to base and override by later height
+        // So we cannot determine version info of the querying key
+        if lower_bound > height.saturating_add(1) {
+            return Err(eg!("height too old, no versioning info"));
+        }
+
         // Iterate in descending order from upper bound until a value is found
         let mut val: Result<Option<Vec<u8>>> = Ok(None);
         let mut stop = false;
