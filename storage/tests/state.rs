@@ -835,7 +835,12 @@ fn test_snapshot() {
 #[test]
 fn test_state_at() {
     let fdb = TempFinDB::new().expect("failed to create fin db");
-    let chain = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string(), 2)));
+    let chain = Arc::new(RwLock::new(ChainState::new(
+        fdb,
+        "test_db".to_string(),
+        2,
+        false,
+    )));
     let state = State::new(chain.clone(), true);
 
     assert!(chain
