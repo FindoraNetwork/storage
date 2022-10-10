@@ -32,13 +32,13 @@ impl FinDB {
     ///
     /// path, one will be created.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<FinDB> {
-        let db = Merk::open(path).map_err(|_| eg!("Failed to open db"))?;
+        let db = Merk::open(path).map_err(|e| eg!("Failed to open db {}", e))?;
         Ok(Self { db })
     }
 
     /// Closes db and deletes all data from disk.
     pub fn destroy(self) -> Result<()> {
-        self.db.destroy().map_err(|_| eg!("Failed to destory db"))
+        self.db.destroy().map_err(|e| eg!("Failed to destory db {}", e))
     }
 }
 
@@ -56,14 +56,14 @@ impl MerkleDB for FinDB {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.db
             .get(key)
-            .map_err(|_| eg!("Failed to get data from db"))
+            .map_err(|e| eg!("Failed to get data from db {}", e))
     }
 
     /// Gets an auxiliary value.
     fn get_aux(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.db
             .get_aux(key)
-            .map_err(|_| eg!("Failed to get aux from db"))
+            .map_err(|e| eg!("Failed to get aux from db {}", e))
     }
 
     /// Puts a batch of KVs
@@ -103,11 +103,11 @@ impl MerkleDB for FinDB {
         let batch_aux = to_batch(aux);
         self.db
             .commit(batch_aux.as_ref())
-            .map_err(|_| eg!("Failed to commit to db"))?;
+            .map_err(|e| eg!("Failed to commit to db {}", e))?;
         if flush {
             self.db
                 .flush()
-                .map_err(|_| eg!("Failed to flush memtables"))?;
+                .map_err(|e| eg!("Failed to flush memtables {}", e))?;
         }
         Ok(())
     }
@@ -116,7 +116,7 @@ impl MerkleDB for FinDB {
     fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.db
             .snapshot(path)
-            .map_err(|_| eg!("Failed to take snapshot"))?;
+            .map_err(|e| eg!("Failed to take snapshot {}", e))?;
         Ok(())
     }
 
@@ -263,7 +263,7 @@ impl MerkleDB for RocksDB {
         if flush {
             self.db
                 .flush()
-                .map_err(|_| eg!("Failed to flush memtables"))?;
+                .map_err(|e| eg!("Failed to flush memtables {}", e))?;
         }
 
         Ok(())
