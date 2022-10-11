@@ -9,11 +9,11 @@ use crate::{
     store::Prefix,
 };
 use ruc::*;
-use std::collections::BTreeMap;
-use std::{ops::Range, path::Path, str};
+use std::{collections::BTreeMap, ops::Range, path::Path, str};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
+const SNAPSHOT_INTERVAL: &[u8; 19] = b"AuxSnapShotInterval";
 const CUR_AUX_VERSION: u64 = 0x01;
 const SPLIT_BGN: &str = "_";
 const TOMBSTONE: [u8; 1] = [206u8];
@@ -29,11 +29,21 @@ pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 pub struct ChainState<D: MerkleDB> {
     _name: String,
     ver_window: u64,
+    snapshot_interval: u64,
     // the min height of the versioned keys
     min_height: u64,
     pinned_height: BTreeMap<u64, u64>,
     version: u64,
     db: D,
+}
+
+/// Configurable options
+#[derive(Default, Clone, Debug)]
+pub struct ChainStateOpts {
+    name: Option<String>,
+    ver_window: u64,
+    snapshot_interval: u64,
+    cleanup_aux: bool,
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -45,26 +55,40 @@ impl<D: MerkleDB> ChainState<D> {
     ///
     /// Returns the implicit struct
     pub fn new(db: D, name: String, ver_window: u64, is_fresh: bool) -> Self {
-        let mut db_name = String::from("chain-state");
-        if !name.is_empty() {
-            db_name = name;
-        }
+        let opts = ChainStateOpts {
+            name: if name.is_empty() { None } else { Some(name) },
+            ver_window,
+            cleanup_aux: is_fresh,
+            ..Default::default()
+        };
+
+        Self::create_with_opts(db, opts)
+    }
+
+    /// Create a new instance of ChainState with user specified options
+    ///
+    pub fn create_with_opts(db: D, opts: ChainStateOpts) -> Self {
+        let db_name = opts.name.unwrap_or_else(|| String::from("chain-state"));
 
         let mut cs = ChainState {
             _name: db_name,
-            ver_window,
+            ver_window: opts.ver_window,
             min_height: 1,
             pinned_height: Default::default(),
             version: Default::default(),
+            snapshot_interval: Default::default(),
             db,
         };
 
         cs.version = cs.get_aux_version().expect("Need a valid version");
+        cs.snapshot_interval = cs
+            .aux_snapshot_interval()
+            .expect("Need a valid snapshot interval");
 
-        if is_fresh {
+        if opts.cleanup_aux {
             cs.clean_aux().unwrap();
         } else {
-            cs.clean_aux_db();
+            cs.clean_aux_db(opts.snapshot_interval);
         }
 
         cs
@@ -128,6 +152,19 @@ impl<D: MerkleDB> ChainState<D> {
         }
 
         Ok(0x00)
+    }
+
+    /// Get snapshot interval in aux db
+    ///
+    /// The default version is 0u64
+    fn aux_snapshot_interval(&self) -> Result<u64> {
+        let raw_vec = self
+            .get_aux(SNAPSHOT_INTERVAL.to_vec().as_ref())?
+            .unwrap_or_else(|| "0".to_string().into_bytes());
+        let raw_str = String::from_utf8(raw_vec).c(d!("Invalid snapshot interval string"))?;
+        raw_str.parse::<u64>().c(d!(
+            "snapshot interval should be a valid 64-bit long integer"
+        ))
     }
 
     /// Iterates MerkleDB for a given range of keys.
@@ -415,6 +452,11 @@ impl<D: MerkleDB> ChainState<D> {
         format!("{:020}", height)
     }
 
+    /// Build a prefix for a snapshot key
+    pub(crate) fn snapshot_key_prefix(height: u64) -> Prefix {
+        Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height).as_bytes())
+    }
+
     /// Build a prefix for a base key
     pub(crate) fn base_key_prefix() -> Prefix {
         Prefix::new("BASE".as_bytes()).push(Self::height_str(0).as_bytes())
@@ -437,19 +479,83 @@ impl<D: MerkleDB> ChainState<D> {
         Ok(key[2..].join(SPLIT_BGN))
     }
 
-    /// Build the chain-state from height 1 to height H
-    ///
-    /// Returns a batch with KV pairs valid at height H
-    ///
-    /// The fn is NOT building a full chainstate any more after BASE introduced, it's now just building the delta
-    /// - Option-1: Considering renaming as `build_state_delta()` in future
-    /// - Option-2: Considering add a flag `delta_or_full` parameter in future
-    pub fn build_state(&self, height: u64, prefix: Option<Prefix>) -> KVBatch {
+    /// height = current_height - ver_window
+    pub fn build_state_with_snapshots(&self, height: u64, interval: u64) -> KVBatch {
+        // 1. determine the minimal height
+        let min_height = if interval == 0 || height % interval == 0 {
+            height
+        } else {
+            height / interval * interval
+        };
+
+        let current_height = self.height().unwrap_or_default();
+        let current_interval = self.snapshot_interval;
+
+        // build base key-values
+        // All versioned key-values before min_height(included) moved to BASE
+        let mut batch = self.build_state(min_height, Some(Self::base_key_prefix()));
+
+        if current_interval != 0 && interval != current_interval {
+            // remove all existed snapshots
+            let mut height = min_height + current_interval;
+            while height <= current_height {
+                let mut snapshot = self.remove_snapshot(height);
+                height += &current_interval;
+                batch.append(&mut snapshot);
+            }
+        }
+
+        if interval != 0 && interval != current_interval {
+            // need to reconstruct snapshots
+            let mut s = min_height + 1;
+            let mut e = min_height + interval;
+            while e <= current_height {
+                let mut snapshot = self.create_snapshot(s, e);
+                batch.append(&mut snapshot);
+                s = e;
+                e = e.saturating_add(interval);
+            }
+        }
+
+        batch
+    }
+
+    // create an new snapshot at height `end` including versioned keys in height range [start, end]
+    // snapshot prefix "SNAPSHOT-{end}"
+    fn create_snapshot(&self, start: u64, end: u64) -> KVBatch {
+        self.build_state_to(Some(start), end, Some(Self::snapshot_key_prefix(end)))
+    }
+
+    fn remove_snapshot(&self, height: u64) -> KVBatch {
+        let mut map = KVMap::new();
+
+        let lower = Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height).as_bytes());
+        let upper =
+            Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+
+        self.iterate_aux(
+            lower.as_ref(),
+            upper.as_ref(),
+            IterOrder::Asc,
+            &mut |(k, _)| -> bool {
+                // Mark this key to be deleted
+                map.insert(k, None);
+                false
+            },
+        );
+
+        map.into_iter().collect::<Vec<_>>()
+    }
+
+    fn build_state_to(&self, s: Option<u64>, e: u64, prefix: Option<Prefix>) -> KVBatch {
         //New map to store KV pairs
         let mut map = KVMap::new();
 
         let lower = Prefix::new("VER".as_bytes());
-        let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+        if let Some(start) = s {
+            lower.push(Self::height_str(start).as_bytes());
+        }
+        let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(e + 1).as_bytes());
 
         self.iterate_aux(
             lower.begin().as_ref(),
@@ -465,21 +571,28 @@ impl<D: MerkleDB> ChainState<D> {
                     map.remove(raw_key.as_bytes());
                 } else {
                     //update map with current KV
-                    map.insert(raw_key.as_bytes().to_vec(), Some(v));
+                    if let Some(prefix) = &prefix {
+                        map.insert(prefix.push(raw_key.as_bytes()).as_ref().to_vec(), Some(v));
+                    } else {
+                        map.insert(raw_key.as_bytes().to_vec(), Some(v));
+                    }
                 }
                 false
             },
         );
 
-        if let Some(prefix) = prefix {
-            let kvs: Vec<_> = map
-                .into_iter()
-                .map(|(k, v)| (prefix.push(&k).as_ref().to_vec(), v))
-                .collect();
-            kvs
-        } else {
-            map.into_iter().collect::<Vec<_>>()
-        }
+        map.into_iter().collect::<Vec<_>>()
+    }
+
+    /// Build the chain-state from height 1 to height H
+    ///
+    /// Returns a batch with KV pairs valid at height H
+    ///
+    /// The fn is NOT building a full chainstate any more after BASE introduced, it's now just building the delta
+    /// - Option-1: Considering renaming as `build_state_delta()` in future
+    /// - Option-2: Considering add a flag `delta_or_full` parameter in future
+    pub fn build_state(&self, height: u64, prefix: Option<Prefix>) -> KVBatch {
+        self.build_state_to(None, height, prefix)
     }
 
     /// Get the value of a key at a given height
@@ -613,7 +726,7 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
-    fn clean_aux_db(&mut self) {
+    fn clean_aux_db(&mut self, snapshot_interval: u64) {
         // A ChainState with pinned height, should never call this function
         assert!(self.pinned_height.is_empty());
 
@@ -626,7 +739,6 @@ impl<D: MerkleDB> ChainState<D> {
             return;
         }
 
-        self.min_height = current_height - self.ver_window + 1;
         //Get batch for state at H = current_height - ver_window
         let mut batch = self.build_state(
             current_height - self.ver_window,
@@ -639,11 +751,22 @@ impl<D: MerkleDB> ChainState<D> {
                 Some(CUR_AUX_VERSION.to_string().into_bytes()),
             ));
         }
+
+        if self.snapshot_interval != snapshot_interval {
+            batch.push((
+                SNAPSHOT_INTERVAL.to_vec(),
+                Some(snapshot_interval.to_string().into_bytes()),
+            ));
+            self.snapshot_interval = snapshot_interval;
+        }
+
         //Commit this batch at base height H
         if self.db.commit(batch, true).is_err() {
             println!("error building base chain state");
             return;
         }
+
+        self.min_height = current_height - self.ver_window + 1;
         // Read back to make sure previous commit works well and update in-memory field
         self.version = self.get_aux_version().expect("cannot read back version");
 

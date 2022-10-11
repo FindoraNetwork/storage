@@ -182,7 +182,7 @@ impl<D: MerkleDB> State<D> {
         }
         let mut cs = self.chain_state.write();
 
-        //Get batch for current block and remove uncessary DELETE.
+        //Get batch for current block and remove unnecessary DELETE.
         //Note: DB will panic if it doesn't contain the key being deleted.
         let mut kv_batch = self.cache.commit();
         kv_batch.retain(|(k, v)| match cs.exists(k).unwrap() {
