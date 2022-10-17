@@ -24,12 +24,26 @@ pub const HASH_LENGTH: usize = 32;
 /// A zero-filled `Hash`. same with fmerk.
 pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 
+enum SnapShotStatus {
+    Avail,
+    Pruning,
+    Pruned,
+}
+
+struct SnapShotInfo {
+    start: u64,
+    end: u64,
+    count: u64,
+    status: SnapShotStatus,
+}
+
 /// Concrete ChainState struct containing a reference to an instance of MerkleDB, a name and
 /// current tree height.
 pub struct ChainState<D: MerkleDB> {
     _name: String,
     ver_window: u64,
     snapshot_interval: u64,
+    snapshot_info: Vec<SnapShotInfo>,
     // the min height of the versioned keys
     min_height: u64,
     pinned_height: BTreeMap<u64, u64>,
@@ -77,6 +91,7 @@ impl<D: MerkleDB> ChainState<D> {
             pinned_height: Default::default(),
             version: Default::default(),
             snapshot_interval: Default::default(),
+            snapshot_info: Default::default(),
             db,
         };
 
@@ -480,8 +495,8 @@ impl<D: MerkleDB> ChainState<D> {
     }
 
     /// height = current_height - ver_window
-    pub fn build_state_with_snapshots(&self, height: u64, interval: u64) -> KVBatch {
-        // 1. determine the minimal height
+    pub fn build_state_with_snapshots(&mut self, height: u64, interval: u64) -> KVBatch {
+        // determine the minimal height
         let min_height = if interval == 0 || height % interval == 0 {
             height
         } else {
@@ -511,7 +526,31 @@ impl<D: MerkleDB> ChainState<D> {
             let mut e = min_height + interval;
             while e <= current_height {
                 let mut snapshot = self.create_snapshot(s, e);
+                let info = SnapShotInfo {
+                    start: s,
+                    end: 3,
+                    count: snapshot.len() as u64,
+                    status: SnapShotStatus::Avail,
+                };
                 batch.append(&mut snapshot);
+                s = e;
+                e = e.saturating_add(interval);
+
+                self.snapshot_info.push(info);
+            }
+        } else {
+            // load snapshot metadata from aux db
+            let mut s = min_height + 1;
+            let mut e = min_height + current_interval;
+            while e <= current_height {
+                let count = self.count_in_snapshot(e);
+                let info = SnapShotInfo {
+                    start: s,
+                    end: e,
+                    count,
+                    status: SnapShotStatus::Avail,
+                };
+                self.snapshot_info.push(info);
                 s = e;
                 e = e.saturating_add(interval);
             }
@@ -538,6 +577,11 @@ impl<D: MerkleDB> ChainState<D> {
             upper.as_ref(),
             IterOrder::Asc,
             &mut |(k, _)| -> bool {
+                // Only remove versioned kv pairs
+                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                if raw_key.is_empty() {
+                    return false;
+                }
                 // Mark this key to be deleted
                 map.insert(k, None);
                 false
@@ -545,6 +589,30 @@ impl<D: MerkleDB> ChainState<D> {
         );
 
         map.into_iter().collect::<Vec<_>>()
+    }
+
+    fn count_in_snapshot(&self, height: u64) -> u64 {
+        let lower = Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height).as_bytes());
+        let upper =
+            Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+
+        let mut count = 0u64;
+
+        self.iterate_aux(
+            lower.as_ref(),
+            upper.as_ref(),
+            IterOrder::Asc,
+            &mut |(k, v)| -> bool {
+                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                if raw_key.is_empty() {
+                    return false;
+                }
+                count = count.saturating_add(1);
+                false
+            },
+        );
+
+        count
     }
 
     fn build_state_to(&self, s: Option<u64>, e: u64, prefix: Option<Prefix>) -> KVBatch {
