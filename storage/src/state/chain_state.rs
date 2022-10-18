@@ -9,7 +9,12 @@ use crate::{
     store::Prefix,
 };
 use ruc::*;
-use std::{collections::BTreeMap, ops::Range, path::Path, str};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    ops::Range,
+    path::Path,
+    str,
+};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
@@ -43,7 +48,7 @@ pub struct ChainState<D: MerkleDB> {
     _name: String,
     ver_window: u64,
     snapshot_interval: u64,
-    snapshot_info: Vec<SnapShotInfo>,
+    snapshot_info: VecDeque<SnapShotInfo>,
     // the min height of the versioned keys
     min_height: u64,
     pinned_height: BTreeMap<u64, u64>,
@@ -330,6 +335,35 @@ impl<D: MerkleDB> ChainState<D> {
             } else {
                 1
             };
+
+            // ToDo: handle in async context to reduce performance impaction
+            // handle snapshot if enabled
+            if self.snapshot_interval != 0 {
+                // remove snapshot if necessary
+                if self.min_height % self.snapshot_interval == 0 {
+                    let mut batch = self.remove_snapshot(self.min_height);
+                    aux_batch.append(&mut batch);
+                    if let Some(info) = self.snapshot_info.pop_front() {
+                        assert_eq!(info.end, self.min_height);
+                    } else {
+                        unreachable!();
+                    }
+                }
+
+                // create snapshot if necessary
+                if height % self.snapshot_interval == 0 {
+                    let s = height - self.snapshot_interval + 1;
+                    let mut batch = self.create_snapshot(s, height);
+                    let info = SnapShotInfo {
+                        start: s,
+                        end: height,
+                        count: batch.len() as u64,
+                        status: SnapShotStatus::Avail,
+                    };
+                    self.snapshot_info.push_back(info);
+                    aux_batch.append(&mut batch);
+                }
+            }
         }
 
         // Store the current height in auxiliary batch
@@ -536,7 +570,7 @@ impl<D: MerkleDB> ChainState<D> {
                 s = e;
                 e = e.saturating_add(interval);
 
-                self.snapshot_info.push(info);
+                self.snapshot_info.push_back(info);
             }
         } else {
             // load snapshot metadata from aux db
@@ -550,7 +584,7 @@ impl<D: MerkleDB> ChainState<D> {
                     count,
                     status: SnapShotStatus::Avail,
                 };
-                self.snapshot_info.push(info);
+                self.snapshot_info.push_back(info);
                 s = e;
                 e = e.saturating_add(interval);
             }
