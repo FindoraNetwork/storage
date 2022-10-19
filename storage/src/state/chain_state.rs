@@ -29,10 +29,11 @@ pub const HASH_LENGTH: usize = 32;
 /// A zero-filled `Hash`. same with fmerk.
 pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 
+#[derive(Debug, Eq, PartialEq)]
 enum SnapShotStatus {
     Avail,
-    Pruning,
-    Pruned,
+    //Pruning,
+    //Pruned,
 }
 
 struct SnapShotInfo {
@@ -561,7 +562,7 @@ impl<D: MerkleDB> ChainState<D> {
                 let mut snapshot = self.create_snapshot(s, e);
                 let info = SnapShotInfo {
                     start: s,
-                    end: 3,
+                    end: e,
                     count: snapshot.len() as u64,
                     status: SnapShotStatus::Avail,
                 };
@@ -635,7 +636,7 @@ impl<D: MerkleDB> ChainState<D> {
             lower.as_ref(),
             upper.as_ref(),
             IterOrder::Asc,
-            &mut |(k, v)| -> bool {
+            &mut |(k, _v)| -> bool {
                 let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
                 if raw_key.is_empty() {
                     return false;
@@ -696,12 +697,112 @@ impl<D: MerkleDB> ChainState<D> {
         self.build_state_to(None, height, prefix)
     }
 
-    /// Get the value of a key at a given height
-    ///
-    /// Returns the value of the given key at a particular height
-    /// Returns None if the key was deleted or invalid at height H
-    #[cfg(feature = "optimize_get_ver")]
-    pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+    fn find_versioned_key_with_range(
+        &self,
+        lower: Vec<u8>,
+        upper: Vec<u8>,
+        key: &[u8],
+        order: IterOrder,
+    ) -> Result<(bool, Option<Vec<u8>>)> {
+        let mut val = Ok((false, None));
+
+        let _ = self.iterate_aux(&lower, &upper, order, &mut |(ver_k, v)| {
+            match Self::get_raw_versioned_key(&ver_k) {
+                Ok(k) => {
+                    if k.as_bytes().eq(key) {
+                        val = Ok((true, if !v.eq(&TOMBSTONE) { Some(v) } else { None }));
+                        return true;
+                    }
+                    false
+                }
+                Err(e) => {
+                    val = Err(e).c(d!("error reading aux value"));
+                    true
+                }
+            }
+        });
+        val
+    }
+
+    fn last_snapshot(&self, height: u64) -> Option<usize> {
+        for (i, ss) in self.snapshot_info.iter().enumerate() {
+            assert_eq!(ss.status, SnapShotStatus::Avail);
+            if ss.start > height {
+                assert_eq!(i, 0);
+                return None;
+            } else if ss.end == height {
+                return Some(i);
+            } else if ss.end < height {
+                continue;
+            } else {
+                assert!(ss.start <= height && ss.end > height);
+                return if i > 0 {
+                    Some(i.saturating_sub(1))
+                } else {
+                    None
+                };
+            }
+        }
+        None
+    }
+
+    fn find_versioned_key_with_snapshots(
+        &self,
+        key: &[u8],
+        height: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        let last = self.last_snapshot(height);
+
+        let s = if let Some(idx) = last {
+            let ss = self
+                .snapshot_info
+                .get(idx)
+                .ok_or(eg!("cannot find snapshot information!"))?;
+            ss.end
+        } else {
+            self.min_height
+        };
+
+        if s <= height {
+            // search versioned key which beyonds snapshots
+            let lower = Self::versioned_key(key, s.saturating_add(1));
+            let upper = Self::versioned_key(key, height.saturating_add(1));
+            let (stop, val) =
+                self.find_versioned_key_with_range(lower, upper, key, IterOrder::Desc)?;
+            if stop {
+                return Ok(val);
+            }
+        }
+
+        if let Some(last) = last {
+            for idx in (0..=last).rev() {
+                let ss = self
+                    .snapshot_info
+                    .get(idx)
+                    .ok_or(eg!("cannot find snapshot info!"))?;
+                let height = ss.end;
+                if ss.count != 0 {
+                    if let Some(v) =
+                        self.get_aux(Self::snapshot_key_prefix(height).push(key).as_ref())?
+                    {
+                        // Value in snapshot should never be TOMBSTONE
+                        return Ok(Some(v));
+                    }
+                }
+            }
+        }
+
+        // search in base
+        let key = Self::base_key(key);
+        self.get_aux(&key).c(d!("error reading aux value"))
+    }
+
+    #[allow(unused)]
+    fn find_versioned_key_without_snapshots(
+        &self,
+        key: &[u8],
+        height: u64,
+    ) -> Result<Option<Vec<u8>>> {
         //Make sure that this key exists to avoid expensive query
         let val = self.get(key).c(d!("error getting value"))?;
         if val.is_none() {
@@ -730,44 +831,27 @@ impl<D: MerkleDB> ChainState<D> {
         }
 
         // Iterate in descending order from upper bound until a value is found
-        let mut val: Result<Option<Vec<u8>>> = Ok(None);
-        let mut stop = false;
         let lower_key = Self::versioned_key(key, lower_bound);
         let upper_key = Self::versioned_key(key, upper_bound.saturating_add(1));
-        let _ = self.iterate_aux(&lower_key, &upper_key, IterOrder::Desc, &mut |(
-            ver_k,
-            v,
-        )| {
-            match Self::get_raw_versioned_key(&ver_k) {
-                Ok(k) => {
-                    if k.as_bytes().eq(key) {
-                        if !v.eq(&TOMBSTONE) {
-                            val = Ok(Some(v));
-                        }
-                        stop = true;
-                        return true;
-                    }
-                    false
-                }
-                Err(e) => {
-                    val = Err(e).c(d!("error reading aux value"));
-                    stop = true;
-                    true
-                }
-            }
-        });
+        let (stop, val) =
+            self.find_versioned_key_with_range(lower_key, upper_key, key, IterOrder::Desc)?;
 
         if stop {
-            return val;
+            return Ok(val);
         }
 
-        // Search it in baseline if never versioned
+        // Search it in baseline if it's un-versioned
         let key = Self::base_key(key);
-        if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
-            Ok(Some(val))
-        } else {
-            Ok(None)
-        }
+        self.get_aux(&key).c(d!("error reading aux value"))
+    }
+
+    /// Get the value of a key at a given height
+    ///
+    /// Returns the value of the given key at a particular height
+    /// Returns None if the key was deleted or invalid at height H
+    #[cfg(feature = "optimize_get_ver")]
+    pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        self.find_versioned_key_with_snapshots(key, height)
     }
 
     /// Get the value of a key at a given height
