@@ -17,5 +17,6 @@ temp_db = { path = "../temp_db", version = "0.2" }
 mem_db = { path = "../mem_db", version = "0.2" }
 
 [features]
+default = [ "optimize_get_ver" ]
 iterator = []
 optimize_get_ver = []
