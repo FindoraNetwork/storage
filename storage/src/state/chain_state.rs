@@ -752,6 +752,12 @@ impl<D: MerkleDB> ChainState<D> {
         key: &[u8],
         height: u64,
     ) -> Result<Option<Vec<u8>>> {
+        // The keys at querying height are moved to base and override by later height
+        // So we cannot determine version info of the querying key
+        if self.min_height > height {
+            return Err(eg!("height too old, no versioning info"));
+        }
+
         let last = self.last_snapshot(height);
 
         let s = if let Some(idx) = last {
@@ -766,7 +772,7 @@ impl<D: MerkleDB> ChainState<D> {
 
         if s <= height {
             // search versioned key which beyonds snapshots
-            let lower = Self::versioned_key(key, s.saturating_add(1));
+            let lower = Self::versioned_key(key, s);
             let upper = Self::versioned_key(key, height.saturating_add(1));
             let (stop, val) =
                 self.find_versioned_key_with_range(lower, upper, key, IterOrder::Desc)?;
@@ -827,7 +833,7 @@ impl<D: MerkleDB> ChainState<D> {
 
         // The keys at querying height are moved to base and override by later height
         // So we cannot determine version info of the querying key
-        if lower_bound > height.saturating_add(1) {
+        if lower_bound > height {
             return Err(eg!("height too old, no versioning info"));
         }
 
@@ -938,6 +944,8 @@ impl<D: MerkleDB> ChainState<D> {
             ));
         }
 
+        // The default snapshot_interval is 0u64
+        // There is no need to update aux database if the interval is 0 and never changed.
         if self.snapshot_interval != snapshot_interval {
             batch.push((
                 SNAPSHOT_INTERVAL.to_vec(),
@@ -952,7 +960,7 @@ impl<D: MerkleDB> ChainState<D> {
             return;
         }
 
-        self.min_height = current_height - self.ver_window + 1;
+        self.min_height = current_height.saturating_sub(self.ver_window);
         // Read back to make sure previous commit works well and update in-memory field
         self.version = self.get_aux_version().expect("cannot read back version");
 
