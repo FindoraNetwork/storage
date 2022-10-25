@@ -1,4 +1,4 @@
-use storage::state::ChainState;
+use storage::state::{ChainState, ChainStateOpts};
 use temp_db::TempFinDB;
 
 #[test]
@@ -123,4 +123,92 @@ fn test_zero_window() {
     assert!(chain.current_window().is_err());
 
     assert!(chain.pin_at(4).is_err());
+}
+
+#[test]
+fn test_create_snapshot_1() {
+    let fdb = TempFinDB::new().expect("failed to create temp findb");
+    let opts = ChainStateOpts {
+        name: Some("test".to_string()),
+        ver_window: 10,
+        snapshot_interval: 0,
+        cleanup_aux: false,
+    };
+    let mut chain = ChainState::create_with_opts(fdb, opts);
+
+    for h in 1..20 {
+        assert!(chain.commit(vec![], h, true).is_ok());
+        assert!(chain.get_snapshots_info().is_empty());
+    }
+}
+
+#[test]
+#[should_panic]
+fn test_create_snapshot_2() {
+    let fdb = TempFinDB::new().expect("failed to create temp findb");
+    let opts = ChainStateOpts {
+        name: Some("test".to_string()),
+        ver_window: 10,
+        snapshot_interval: 1,
+        cleanup_aux: false,
+    };
+    let _ = ChainState::create_with_opts(fdb, opts);
+}
+
+#[test]
+#[should_panic]
+fn test_create_snapshot_2_1() {
+    let fdb = TempFinDB::new().expect("failed to create temp findb");
+    let opts = ChainStateOpts {
+        name: Some("test".to_string()),
+        ver_window: 0,
+        snapshot_interval: 2,
+        cleanup_aux: false,
+    };
+    let _ = ChainState::create_with_opts(fdb, opts);
+}
+
+#[test]
+#[should_panic]
+fn test_create_snapshot_2_2() {
+    let fdb = TempFinDB::new().expect("failed to create temp findb");
+    let opts = ChainStateOpts {
+        name: Some("test".to_string()),
+        ver_window: 3,
+        snapshot_interval: 2,
+        cleanup_aux: false,
+    };
+    let _ = ChainState::create_with_opts(fdb, opts);
+}
+
+#[test]
+fn test_create_snapshot_3() {
+    let fdb = TempFinDB::new().expect("failed to create temp findb");
+    let opts = ChainStateOpts {
+        name: Some("test".to_string()),
+        ver_window: 10,
+        snapshot_interval: 2,
+        cleanup_aux: false,
+    };
+    let interval = opts.snapshot_interval;
+    let snapshot_created_at = interval;
+    let mut chain = ChainState::create_with_opts(fdb, opts);
+
+    assert!(chain.get_snapshots_info().is_empty());
+
+    for h in 0..snapshot_created_at {
+        assert!(chain.commit(vec![], h, true).is_ok());
+        assert!(chain.get_snapshots_info().is_empty());
+    }
+
+    for h in snapshot_created_at..20 {
+        assert!(chain.commit(vec![], h, true).is_ok());
+        let snapshots = chain.get_snapshots_info();
+        if let Some(latest) = snapshots.last() {
+            assert_eq!(latest.end, h / interval * interval);
+            assert_eq!(latest.count, 0);
+        } else {
+            unreachable!();
+        }
+    }
 }

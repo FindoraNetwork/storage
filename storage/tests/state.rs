@@ -1,3 +1,5 @@
+extern crate core;
+
 #[cfg(test)]
 mod chain_state;
 

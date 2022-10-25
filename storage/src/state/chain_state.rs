@@ -29,18 +29,19 @@ pub const HASH_LENGTH: usize = 32;
 /// A zero-filled `Hash`. same with fmerk.
 pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 
-#[derive(Debug, Eq, PartialEq)]
-enum SnapShotStatus {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum SnapShotStatus {
     Avail,
     //Pruning,
     //Pruned,
 }
 
-struct SnapShotInfo {
-    start: u64,
-    end: u64,
-    count: u64,
-    status: SnapShotStatus,
+#[derive(Debug, Clone)]
+pub struct SnapShotInfo {
+    pub start: u64,
+    pub end: u64,
+    pub count: u64,
+    pub status: SnapShotStatus,
 }
 
 /// Concrete ChainState struct containing a reference to an instance of MerkleDB, a name and
@@ -60,10 +61,10 @@ pub struct ChainState<D: MerkleDB> {
 /// Configurable options
 #[derive(Default, Clone, Debug)]
 pub struct ChainStateOpts {
-    name: Option<String>,
-    ver_window: u64,
-    snapshot_interval: u64,
-    cleanup_aux: bool,
+    pub name: Option<String>,
+    pub ver_window: u64,
+    pub snapshot_interval: u64,
+    pub cleanup_aux: bool,
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -89,6 +90,19 @@ impl<D: MerkleDB> ChainState<D> {
     ///
     pub fn create_with_opts(db: D, opts: ChainStateOpts) -> Self {
         let db_name = opts.name.unwrap_or_else(|| String::from("chain-state"));
+
+        if opts.snapshot_interval == 1 {
+            panic!("snapshot interval cannot be One")
+        }
+
+        if opts.ver_window < opts.snapshot_interval {
+            panic!("version window is too small");
+        }
+        // ver_window is larger than snapshot_interval
+        // ver_window should align at snapshot_interval
+        if opts.snapshot_interval != 0 && opts.ver_window % opts.snapshot_interval != 0 {
+            panic!("ver_window should align at snapshot_interval");
+        }
 
         let mut cs = ChainState {
             _name: db_name,
@@ -186,6 +200,11 @@ impl<D: MerkleDB> ChainState<D> {
         raw_str.parse::<u64>().c(d!(
             "snapshot interval should be a valid 64-bit long integer"
         ))
+    }
+
+    /// Get snapshot info
+    pub fn get_snapshots_info(&self) -> Vec<SnapShotInfo> {
+        self.snapshot_info.iter().cloned().collect()
     }
 
     /// Iterates MerkleDB for a given range of keys.
@@ -340,6 +359,7 @@ impl<D: MerkleDB> ChainState<D> {
             // ToDo: handle in async context to reduce performance impaction
             // handle snapshot if enabled
             if self.snapshot_interval != 0 {
+                assert_ne!(self.snapshot_interval, 1);
                 // remove snapshot if necessary
                 if self.min_height % self.snapshot_interval == 0 {
                     let mut batch = self.remove_snapshot(self.min_height);
@@ -352,7 +372,8 @@ impl<D: MerkleDB> ChainState<D> {
                 }
 
                 // create snapshot if necessary
-                if height % self.snapshot_interval == 0 {
+                if height > 0 && height % self.snapshot_interval == 0 {
+                    println!("snapshot at {}", height);
                     let s = height - self.snapshot_interval + 1;
                     let mut batch = self.create_snapshot(s, height);
                     let info = SnapShotInfo {
@@ -922,28 +943,7 @@ impl<D: MerkleDB> ChainState<D> {
         // A ChainState with pinned height, should never call this function
         assert!(self.pinned_height.is_empty());
 
-        //Get current height
-        let current_height = self.height().unwrap_or(0);
-        if current_height == 0 {
-            return;
-        }
-        if current_height < self.ver_window + 1 {
-            return;
-        }
-
-        //Get batch for state at H = current_height - ver_window
-        let mut batch = self.build_state(
-            current_height - self.ver_window,
-            Some(Self::base_key_prefix()),
-        );
-        // Update aux version if needed
-        if self.version != CUR_AUX_VERSION {
-            batch.push((
-                AUX_VERSION.to_vec(),
-                Some(CUR_AUX_VERSION.to_string().into_bytes()),
-            ));
-        }
-
+        let mut batch = KVBatch::new();
         // The default snapshot_interval is 0u64
         // There is no need to update aux database if the interval is 0 and never changed.
         if self.snapshot_interval != snapshot_interval {
@@ -953,6 +953,30 @@ impl<D: MerkleDB> ChainState<D> {
             ));
             self.snapshot_interval = snapshot_interval;
         }
+
+        // Update aux version if needed
+        if self.version != CUR_AUX_VERSION {
+            batch.push((
+                AUX_VERSION.to_vec(),
+                Some(CUR_AUX_VERSION.to_string().into_bytes()),
+            ));
+        }
+
+        //Get current height
+        let current_height = self.height().unwrap_or(0);
+        if current_height == 0 || current_height < self.ver_window + 1 {
+            //Commit this batch at base height H
+            if !batch.is_empty() && self.db.commit(batch, true).is_err() {
+                panic!("error building base chain state");
+            }
+            return;
+        }
+
+        //Get batch for state at H = current_height - ver_window
+        batch.append(&mut self.build_state(
+            current_height - self.ver_window,
+            Some(Self::base_key_prefix()),
+        ));
 
         //Commit this batch at base height H
         if self.db.commit(batch, true).is_err() {
