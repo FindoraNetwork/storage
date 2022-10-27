@@ -780,7 +780,13 @@ impl<D: MerkleDB> ChainState<D> {
         // The keys at querying height are moved to base and override by later height
         // So we cannot determine version info of the querying key
         if self.min_height > height {
-            return Err(eg!("height too old, no versioning info"));
+            return if self.min_height == height.saturating_add(1) {
+                // search in the `base`
+                let key = Self::base_key(key);
+                self.get_aux(&key).c(d!("error reading aux value"))
+            } else {
+                Err(eg!("height too old, no versioning info"))
+            };
         }
 
         let last = self.last_snapshot(height);
@@ -1016,7 +1022,7 @@ impl<D: MerkleDB> ChainState<D> {
         let _ = self.db.commit(batch, true);
     }
 
-    /// Gets current versioning range of the chain-state
+    /// Gets current versioning window of the chain-state
     ///
     /// returns a range of the current versioning window [lower, upper)
     pub fn get_ver_range(&self) -> Result<Range<u64>> {
@@ -1033,7 +1039,7 @@ impl<D: MerkleDB> ChainState<D> {
         Ok(lower..upper)
     }
 
-    // The height of last snapshot before `height(included)`
+    /// The height of last snapshot before `height(included)`
     pub fn last_snapshot_before(&self, height: u64) -> Option<u64> {
         let interval = self.snapshot_interval;
         if interval >= 2 {

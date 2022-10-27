@@ -916,9 +916,12 @@ fn test_state_at() {
         )
         .is_ok());
 
-    // the version of 'k10' at height 1 is override by height 2
-    assert!(state.get_ver(b"k10", 1).is_err());
+    // the version of 'k10' at height 1 is in the `base`
+    assert!(state
+        .get_ver(b"k10", 1)
+        .map_or(false, |v| v == Some(b"v110".to_vec())));
 
+    // the version of 'k10' at height 2 is in the `ver_window`
     assert!(state
         .get_ver(b"k10", 2)
         .map_or(false, |v| v == Some(b"v210".to_vec())));
@@ -936,6 +939,10 @@ fn test_state_at() {
         )
         .is_ok());
 
-    // Keys at height 2 is in base now and override by height 3
-    assert!(state.get_ver(b"k10", 2).is_err());
+    // Keys at height 1 are squashed
+    assert!(state.get_ver(b"k10", 1).is_err());
+    // Keys at height 2 is in base now
+    assert!(state
+        .get_ver(b"k10", 2)
+        .map_or(false, |v| v == Some(b"v210".to_vec())));
 }
