@@ -263,6 +263,17 @@ fn test_create_snapshot_3_1() {
     let snapshots = chain.get_snapshots_info();
     let first = snapshots.first().unwrap();
     assert_eq!(first.end, last_snapshot);
+
+    chain.unpin_at(height);
+    assert!(chain.commit(vec![], 101, true).is_ok());
+    let snapshots = chain.get_snapshots_info();
+    let first = snapshots.first().unwrap();
+    let min_height = chain.get_ver_range().unwrap().start;
+    let mut snapshot_at = chain.last_snapshot_before(min_height).unwrap();
+    if snapshot_at < min_height {
+        snapshot_at += interval;
+    }
+    assert_eq!(first.end, snapshot_at);
 }
 
 #[test]

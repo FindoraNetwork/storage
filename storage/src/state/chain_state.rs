@@ -349,6 +349,7 @@ impl<D: MerkleDB> ChainState<D> {
                 self.prune_aux_batch(h, &mut aux_batch)?;
             }
 
+            let last_min_height = self.min_height;
             // update the left side of version window
             self.min_height = if upper >= self.ver_window.saturating_add(1) {
                 upper.saturating_sub(self.ver_window)
@@ -362,16 +363,16 @@ impl<D: MerkleDB> ChainState<D> {
                 assert_ne!(self.snapshot_interval, 1);
                 // Versioned keys before height `min_height` have been pruned and moved to `base`,
                 // if there is a snapshot at height `min_height-1`, it should be removed too.
-                if self.min_height > 1
-                    && (self.min_height.saturating_sub(1)) % self.snapshot_interval == 0
-                {
-                    let snapshot_at = self.min_height.saturating_sub(1);
-                    let mut batch = self.remove_snapshot(snapshot_at);
-                    aux_batch.append(&mut batch);
-                    if let Some(info) = self.snapshot_info.pop_front() {
-                        assert_eq!(info.end, snapshot_at);
-                    } else {
-                        unreachable!();
+                // This could be multiple removals if `unpin` operations occurred.
+                for snapshot_at in last_min_height..self.min_height {
+                    if snapshot_at > 0 && snapshot_at % self.snapshot_interval == 0 {
+                        let mut batch = self.remove_snapshot(snapshot_at);
+                        aux_batch.append(&mut batch);
+                        if let Some(info) = self.snapshot_info.pop_front() {
+                            assert_eq!(info.end, snapshot_at);
+                        } else {
+                            unreachable!();
+                        }
                     }
                 }
 
