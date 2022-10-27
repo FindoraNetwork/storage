@@ -351,12 +351,13 @@ impl<D: MerkleDB> ChainState<D> {
                 }
 
                 // create snapshot if necessary
-                if height % self.snapshot_interval == 0 {
-                    let s = height - self.snapshot_interval + 1;
-                    let mut batch = self.create_snapshot(s, height);
+                if height > 1 && height.saturating_sub(1) % self.snapshot_interval == 0 {
+                    let snapshot_at = height.saturating_sub(1);
+                    let s = snapshot_at - self.snapshot_interval + 1;
+                    let mut batch = self.create_snapshot(s, snapshot_at);
                     let info = SnapShotInfo {
                         start: s,
-                        end: height,
+                        end: snapshot_at,
                         count: batch.len() as u64,
                         status: SnapShotStatus::Avail,
                     };
@@ -596,7 +597,7 @@ impl<D: MerkleDB> ChainState<D> {
     // create an new snapshot at height `end` including versioned keys in height range [start, end]
     // snapshot prefix "SNAPSHOT-{end}"
     fn create_snapshot(&self, start: u64, end: u64) -> KVBatch {
-        self.build_state_to(Some(start), end, Some(Self::snapshot_key_prefix(end)))
+        self.build_state_to(Some(start), end, Some(Self::snapshot_key_prefix(end)), true)
     }
 
     fn remove_snapshot(&self, height: u64) -> KVBatch {
@@ -649,7 +650,13 @@ impl<D: MerkleDB> ChainState<D> {
         count
     }
 
-    fn build_state_to(&self, s: Option<u64>, e: u64, prefix: Option<Prefix>) -> KVBatch {
+    fn build_state_to(
+        &self,
+        s: Option<u64>,
+        e: u64,
+        prefix: Option<Prefix>,
+        keep_tombstone: bool,
+    ) -> KVBatch {
         //New map to store KV pairs
         let mut map = KVMap::new();
 
@@ -669,7 +676,7 @@ impl<D: MerkleDB> ChainState<D> {
                     return false;
                 }
                 //If value was deleted in the version history, delete it in the map
-                if v.eq(&TOMBSTONE) {
+                if !keep_tombstone && v.eq(&TOMBSTONE) {
                     map.remove(raw_key.as_bytes());
                 } else {
                     //update map with current KV
@@ -694,7 +701,7 @@ impl<D: MerkleDB> ChainState<D> {
     /// - Option-1: Considering renaming as `build_state_delta()` in future
     /// - Option-2: Considering add a flag `delta_or_full` parameter in future
     pub fn build_state(&self, height: u64, prefix: Option<Prefix>) -> KVBatch {
-        self.build_state_to(None, height, prefix)
+        self.build_state_to(None, height, prefix, false)
     }
 
     fn find_versioned_key_with_range(
@@ -785,8 +792,7 @@ impl<D: MerkleDB> ChainState<D> {
                     if let Some(v) =
                         self.get_aux(Self::snapshot_key_prefix(height).push(key).as_ref())?
                     {
-                        // Value in snapshot should never be TOMBSTONE
-                        return Ok(Some(v));
+                        return Ok(if v.eq(&TOMBSTONE) { None } else { Some(v) });
                     }
                 }
             }
@@ -989,6 +995,35 @@ impl<D: MerkleDB> ChainState<D> {
             lower = upper.saturating_sub(self.ver_window);
         }
         Ok(lower..upper)
+    }
+
+    /// The height of last snapshot before `height(included)`
+    pub fn last_snapshot_before(&self, height: u64) -> Option<u64> {
+        let interval = self.snapshot_interval;
+        if interval >= 2 {
+            Some(if height % interval == 0 {
+                height
+            } else {
+                height / interval * interval
+            })
+        } else {
+            None
+        }
+    }
+
+    /// The height of oldest snapshot
+    pub fn oldest_snapshot(&self) -> Option<u64> {
+        let interval = self.snapshot_interval;
+        let min_height = self.get_ver_range().ok()?.start;
+        if interval >= 2 {
+            Some(if min_height % interval == 0 {
+                min_height
+            } else {
+                (min_height / interval + 1) * interval
+            })
+        } else {
+            None
+        }
     }
 
     pub fn clean_aux(&mut self) -> Result<()> {
