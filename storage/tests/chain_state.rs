@@ -192,7 +192,7 @@ fn test_create_snapshot_3() {
         snapshot_interval: interval,
         cleanup_aux: false,
     };
-    let snapshot_created_at = interval;
+    let snapshot_created_at = interval.saturating_add(1);
     let snapshot_dropped_at = opts.ver_window.saturating_add(interval);
     let mut chain = ChainState::create_with_opts(fdb, opts);
 
@@ -208,10 +208,10 @@ fn test_create_snapshot_3() {
 
         let snapshots = chain.get_snapshots_info();
         let latest = snapshots.last().unwrap();
-        assert_eq!(latest.end, h / interval * interval);
+        assert_eq!(latest.end, h.saturating_sub(1) / interval * interval);
         assert_eq!(latest.count, 0);
         let first = snapshots.first().unwrap();
-        assert_eq!(first.end, snapshot_created_at);
+        assert_eq!(first.end, snapshot_created_at.saturating_sub(1));
     }
 
     for h in snapshot_dropped_at..20 {
@@ -219,7 +219,7 @@ fn test_create_snapshot_3() {
 
         let snapshots = chain.get_snapshots_info();
         let latest = snapshots.last().unwrap();
-        assert_eq!(latest.end, h / interval * interval);
+        assert_eq!(latest.end, h.saturating_sub(1) / interval * interval);
 
         let first = snapshots.first().unwrap();
         let min_height = chain.get_ver_range().unwrap().start;
@@ -252,34 +252,29 @@ fn test_create_snapshot_3_1() {
     }
 
     let height = snapshot_dropped_at.saturating_sub(ver_window);
-    let last_snapshot = chain.last_snapshot_before(height).unwrap();
-    println!("pin at {} last_snapshot {}", height, last_snapshot);
     assert!(chain.pin_at(height).is_ok());
 
+    // commit to create more snapshots
     for h in snapshot_dropped_at..100 {
         assert!(chain.commit(vec![], h, true).is_ok());
     }
 
+    // pin first, then calculate oldest snapshot
+    let last_snapshot = chain.oldest_snapshot().unwrap();
     let snapshots = chain.get_snapshots_info();
     let first = snapshots.first().unwrap();
     assert_eq!(first.end, last_snapshot);
 
     chain.unpin_at(height);
+    // commit to remove snapshots
     assert!(chain.commit(vec![], 101, true).is_ok());
     let snapshots = chain.get_snapshots_info();
     let first = snapshots.first().unwrap();
-    let min_height = chain.get_ver_range().unwrap().start;
-    let mut snapshot_at = chain.last_snapshot_before(min_height).unwrap();
-    if snapshot_at < min_height {
-        snapshot_at += interval;
-    }
+    let snapshot_at = chain.oldest_snapshot().unwrap();
     assert_eq!(first.end, snapshot_at);
 }
 
-#[test]
-fn test_get_ver_with_snapshots() {
-    let ver_window = 21;
-    let interval = 7;
+fn gen_cs(ver_window: u64, interval: u64) -> ChainState<TempFinDB> {
     let fdb = TempFinDB::new().expect("failed to create temp findb");
     let opts = ChainStateOpts {
         name: Some("test".to_string()),
@@ -287,8 +282,116 @@ fn test_get_ver_with_snapshots() {
         snapshot_interval: interval,
         cleanup_aux: false,
     };
+    ChainState::create_with_opts(fdb, opts)
+}
 
-    let mut chain = ChainState::create_with_opts(fdb, opts);
+fn apply_operations(
+    chain: &mut ChainState<TempFinDB>,
+    operations: Vec<(u64, Option<Vec<u8>>)>,
+    max_height: u64,
+) {
+    let key = b"test_key".to_vec();
+    let mut h = 0;
+    for e in operations {
+        while h < e.0 {
+            chain.commit(vec![], h, false).unwrap();
+            h += 1;
+        }
+        let batch = vec![(key.clone(), e.1)];
+        chain.commit(batch, e.0, false).unwrap();
+    }
 
-    assert!(chain.get_snapshots_info().is_empty());
+    while h <= max_height {
+        chain.commit(vec![], h, false).unwrap();
+        h += 1;
+    }
+}
+
+fn verify_expectations(chain: &ChainState<TempFinDB>, expectations: Vec<(u64, Option<Vec<u8>>)>) {
+    for e in expectations {
+        let val = match chain.get_ver(b"test_key", e.0) {
+            Err(e) if e.to_string().contains("no versioning info") => None,
+            Ok(v) => v,
+            _ => panic!("failed!"),
+        };
+        assert_eq!(val, e.1);
+    }
+}
+
+#[test]
+fn test_get_ver_with_snapshots() {
+    let mut chain = gen_cs(110, 11);
+
+    let operations = vec![
+        (3, Some(b"test-val3".to_vec())),
+        (4, Some(b"test-val4".to_vec())),
+        (7, None),
+        (15, Some(b"test-val15".to_vec())),
+    ];
+    apply_operations(&mut chain, operations, 50);
+
+    let expectations = vec![
+        (3, Some(b"test-val3".to_vec())),
+        (4, Some(b"test-val4".to_vec())),
+        (6, Some(b"test-val4".to_vec())),
+        (7, None),
+        (8, None),
+        (10, None),
+        (15, Some(b"test-val15".to_vec())),
+        (20, Some(b"test-val15".to_vec())),
+    ];
+    verify_expectations(&chain, expectations);
+}
+
+#[test]
+fn test_get_ver_with_snapshots_2() {
+    for interval in 5..20 {
+        let mut chain = gen_cs(interval * 10, interval);
+
+        let operations = vec![
+            (3, Some(b"test-val3".to_vec())),
+            (4, Some(b"test-val4".to_vec())),
+            (7, None),
+            (15, Some(b"test-val15".to_vec())),
+        ];
+        apply_operations(&mut chain, operations, 50);
+
+        let expectations = vec![
+            (3, Some(b"test-val3".to_vec())),
+            (4, Some(b"test-val4".to_vec())),
+            (6, Some(b"test-val4".to_vec())),
+            (7, None),
+            (8, None),
+            (10, None),
+            (15, Some(b"test-val15".to_vec())),
+            (20, Some(b"test-val15".to_vec())),
+        ];
+        verify_expectations(&chain, expectations);
+    }
+}
+
+#[test]
+fn test_get_ver_with_snapshots_3() {
+    let mut chain = gen_cs(55, 11);
+
+    let operations = vec![
+        (3, Some(b"test-val3".to_vec())),
+        (4, Some(b"test-val4".to_vec())),
+        (60, None),
+        (77, Some(b"test-val77".to_vec())),
+    ];
+    apply_operations(&mut chain, operations, 100);
+
+    // min_height is 100 - 55 = 45
+    let expectations = vec![
+        (3, None),
+        (4, None),                         // squashed in base
+        (44, Some(b"test-val4".to_vec())), // in th base
+        (45, Some(b"test-val4".to_vec())), // in th ver_window
+        (60, None),
+        (61, None),
+        (77, Some(b"test-val77".to_vec())),
+        (80, Some(b"test-val77".to_vec())),
+    ];
+    verify_expectations(&chain, expectations);
 }
