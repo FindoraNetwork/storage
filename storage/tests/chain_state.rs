@@ -183,15 +183,17 @@ fn test_create_snapshot_2_2() {
 
 #[test]
 fn test_create_snapshot_3() {
+    let ver_window = 12;
+    let interval = 3;
     let fdb = TempFinDB::new().expect("failed to create temp findb");
     let opts = ChainStateOpts {
         name: Some("test".to_string()),
-        ver_window: 10,
-        snapshot_interval: 2,
+        ver_window,
+        snapshot_interval: interval,
         cleanup_aux: false,
     };
-    let interval = opts.snapshot_interval;
     let snapshot_created_at = interval;
+    let snapshot_dropped_at = opts.ver_window.saturating_add(interval);
     let mut chain = ChainState::create_with_opts(fdb, opts);
 
     assert!(chain.get_snapshots_info().is_empty());
@@ -201,14 +203,81 @@ fn test_create_snapshot_3() {
         assert!(chain.get_snapshots_info().is_empty());
     }
 
-    for h in snapshot_created_at..20 {
+    for h in snapshot_created_at..snapshot_dropped_at {
         assert!(chain.commit(vec![], h, true).is_ok());
+
         let snapshots = chain.get_snapshots_info();
-        if let Some(latest) = snapshots.last() {
-            assert_eq!(latest.end, h / interval * interval);
-            assert_eq!(latest.count, 0);
-        } else {
-            unreachable!();
-        }
+        let latest = snapshots.last().unwrap();
+        assert_eq!(latest.end, h / interval * interval);
+        assert_eq!(latest.count, 0);
+        let first = snapshots.first().unwrap();
+        assert_eq!(first.end, snapshot_created_at);
     }
+
+    for h in snapshot_dropped_at..20 {
+        assert!(chain.commit(vec![], h, true).is_ok());
+
+        let snapshots = chain.get_snapshots_info();
+        let latest = snapshots.last().unwrap();
+        assert_eq!(latest.end, h / interval * interval);
+
+        let first = snapshots.first().unwrap();
+        let min_height = chain.get_ver_range().unwrap().start;
+        let mut snapshot_at = chain.last_snapshot_before(min_height).unwrap();
+        if snapshot_at < min_height {
+            // At this case, the snapshot at `snapshot_at` has been removed in last commit
+            snapshot_at += interval;
+        }
+        assert_eq!(first.end, snapshot_at);
+    }
+}
+
+#[test]
+fn test_create_snapshot_3_1() {
+    let ver_window = 21;
+    let interval = 7;
+    let fdb = TempFinDB::new().expect("failed to create temp findb");
+    let opts = ChainStateOpts {
+        name: Some("test".to_string()),
+        ver_window,
+        snapshot_interval: interval,
+        cleanup_aux: false,
+    };
+
+    let snapshot_dropped_at = opts.ver_window.saturating_add(interval);
+    let mut chain = ChainState::create_with_opts(fdb, opts);
+
+    for h in 0..snapshot_dropped_at {
+        assert!(chain.commit(vec![], h, true).is_ok());
+    }
+
+    let height = snapshot_dropped_at.saturating_sub(ver_window);
+    let last_snapshot = chain.last_snapshot_before(height).unwrap();
+    println!("pin at {} last_snapshot {}", height, last_snapshot);
+    assert!(chain.pin_at(height).is_ok());
+
+    for h in snapshot_dropped_at..100 {
+        assert!(chain.commit(vec![], h, true).is_ok());
+    }
+
+    let snapshots = chain.get_snapshots_info();
+    let first = snapshots.first().unwrap();
+    assert_eq!(first.end, last_snapshot);
+}
+
+#[test]
+fn test_get_ver_with_snapshots() {
+    let ver_window = 21;
+    let interval = 7;
+    let fdb = TempFinDB::new().expect("failed to create temp findb");
+    let opts = ChainStateOpts {
+        name: Some("test".to_string()),
+        ver_window,
+        snapshot_interval: interval,
+        cleanup_aux: false,
+    };
+
+    let mut chain = ChainState::create_with_opts(fdb, opts);
+
+    assert!(chain.get_snapshots_info().is_empty());
 }

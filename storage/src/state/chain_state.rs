@@ -360,12 +360,16 @@ impl<D: MerkleDB> ChainState<D> {
             // handle snapshot if enabled
             if self.snapshot_interval != 0 {
                 assert_ne!(self.snapshot_interval, 1);
-                // remove snapshot if necessary
-                if self.min_height % self.snapshot_interval == 0 {
-                    let mut batch = self.remove_snapshot(self.min_height);
+                // Versioned keys before height `min_height` have been pruned and moved to `base`,
+                // if there is a snapshot at height `min_height-1`, it should be removed too.
+                if self.min_height > 1
+                    && (self.min_height.saturating_sub(1)) % self.snapshot_interval == 0
+                {
+                    let snapshot_at = self.min_height.saturating_sub(1);
+                    let mut batch = self.remove_snapshot(snapshot_at);
                     aux_batch.append(&mut batch);
                     if let Some(info) = self.snapshot_info.pop_front() {
-                        assert_eq!(info.end, self.min_height);
+                        assert_eq!(info.end, snapshot_at);
                     } else {
                         unreachable!();
                     }
@@ -373,7 +377,6 @@ impl<D: MerkleDB> ChainState<D> {
 
                 // create snapshot if necessary
                 if height > 0 && height % self.snapshot_interval == 0 {
-                    println!("snapshot at {}", height);
                     let s = height - self.snapshot_interval + 1;
                     let mut batch = self.create_snapshot(s, height);
                     let info = SnapShotInfo {
@@ -1021,7 +1024,26 @@ impl<D: MerkleDB> ChainState<D> {
         if upper > self.ver_window {
             lower = upper.saturating_sub(self.ver_window);
         }
+        if let Some(&pinned) = self.pinned_height.keys().min() {
+            if pinned < lower {
+                lower = pinned;
+            }
+        }
         Ok(lower..upper)
+    }
+
+    // The height of last snapshot before `height(included)`
+    pub fn last_snapshot_before(&self, height: u64) -> Option<u64> {
+        let interval = self.snapshot_interval;
+        if interval >= 2 {
+            Some(if height % interval == 0 {
+                height
+            } else {
+                height / interval * interval
+            })
+        } else {
+            None
+        }
     }
 
     pub fn clean_aux(&mut self) -> Result<()> {
