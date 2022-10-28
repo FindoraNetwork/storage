@@ -133,7 +133,6 @@ fn prefixed_store() {
         fdb,
         "test_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut state = State::new(cs, true);
     let mut store = PrefixedStore::new("my_store", &mut state);
@@ -175,7 +174,6 @@ fn store_stake() {
         fdb,
         "findora_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut check = State::new(cs, true);
     let mut store = StakeStore::new("stake", &mut check);
@@ -221,7 +219,6 @@ fn store_unstake() {
         fdb,
         "findora_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut check = State::new(cs, true);
     let mut store = StakeStore::new("stake", &mut check);
@@ -256,7 +253,6 @@ fn store_stake_unstake_too_fast() {
         fdb,
         "findora_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut check = State::new(cs, true);
     let mut store = StakeStore::new("stake", &mut check);
@@ -302,7 +298,6 @@ fn store_iter_db() {
         fdb,
         "findora_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut check = State::new(cs, true);
     let mut store = StakeStore::new("stake", &mut check);
@@ -371,7 +366,6 @@ fn store_iter_cur() {
         fdb,
         "findora_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut check = State::new(cs, true);
     let mut store = StakeStore::new("stake", &mut check);
@@ -417,7 +411,6 @@ fn store_threading() {
         fdb,
         "findora_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut state = State::new(cs.clone(), true);
     let mut store = StakeStore::new("stake", &mut state);
@@ -584,7 +577,6 @@ fn test_prefixed_store() {
         fdb,
         "findora_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut state = State::new(cs, true);
     let mut store = PrefixedStore::new("testStore", &mut state);
@@ -633,14 +625,14 @@ fn test_prefixed_store() {
 /// create chain state of `FinDB`
 fn gen_cs(path: String) -> Arc<RwLock<ChainState<TempFinDB>>> {
     let fdb = TempFinDB::open(path).expect("failed to open findb");
-    let cs = ChainState::new(fdb, "test_db".to_string(), VER_WINDOW, false);
+    let cs = ChainState::new(fdb, "test_db".to_string(), VER_WINDOW);
     Arc::new(RwLock::new(cs))
 }
 
 /// create chain state of `RocksDB`
 fn gen_cs_rocks(path: String) -> Arc<RwLock<ChainState<TempRocksDB>>> {
     let fdb = TempRocksDB::open(path).expect("failed to open rocksdb");
-    let cs = ChainState::new(fdb, "test_db".to_string(), 0, false);
+    let cs = ChainState::new(fdb, "test_db".to_string(), 0);
     Arc::new(RwLock::new(cs))
 }
 
@@ -765,7 +757,6 @@ fn test_set_big_kv_checked() {
         fdb,
         "test_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut state = State::new(cs, true);
 
@@ -794,7 +785,6 @@ fn test_set_big_key_unchecked_panic() {
         fdb,
         "test_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut state = State::new(cs, true);
 
@@ -822,7 +812,6 @@ fn test_set_big_value_unchecked_panic() {
         fdb,
         "test_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut state = State::new(cs, true);
 
@@ -1050,7 +1039,6 @@ fn test_root_hash() {
         fdb,
         "test_db".to_string(),
         VER_WINDOW,
-        false,
     )));
     let mut state = State::new(cs, true);
 

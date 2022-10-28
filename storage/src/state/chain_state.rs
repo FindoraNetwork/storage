@@ -75,11 +75,11 @@ impl<D: MerkleDB> ChainState<D> {
     /// MerkleDB trait is assigned.
     ///
     /// Returns the implicit struct
-    pub fn new(db: D, name: String, ver_window: u64, is_fresh: bool) -> Self {
+    pub fn new(db: D, name: String, ver_window: u64) -> Self {
         let opts = ChainStateOpts {
             name: if name.is_empty() { None } else { Some(name) },
             ver_window,
-            cleanup_aux: is_fresh,
+            cleanup_aux: false,
             ..Default::default()
         };
 
