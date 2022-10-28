@@ -299,6 +299,7 @@ fn apply_operations(
         }
         let batch = vec![(key.clone(), e.1)];
         chain.commit(batch, e.0, false).unwrap();
+        h += 1;
     }
 
     while h <= max_height {
@@ -394,4 +395,22 @@ fn test_get_ver_with_snapshots_3() {
         (80, Some(b"test-val77".to_vec())),
     ];
     verify_expectations(&chain, expectations);
+}
+
+#[test]
+fn test_commit_at_zero() {
+    let mut chain = gen_cs(100, 0);
+
+    let key = vec![0u8; 12];
+    let val = vec![0u8; 12];
+
+    chain
+        .commit(vec![(key.clone(), Some(val.clone()))], 0, true)
+        .unwrap();
+    chain.commit(vec![], 1, true).unwrap();
+    chain.commit(vec![], 1, true).unwrap();
+
+    assert_eq!(chain.get(key.as_slice()).unwrap(), Some(val.clone()));
+    assert_eq!(chain.get_ver(key.as_slice(), 0).unwrap(), Some(val.clone()));
+    assert_eq!(chain.get_ver(key.as_slice(), 1).unwrap(), Some(val));
 }

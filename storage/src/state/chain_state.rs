@@ -330,11 +330,9 @@ impl<D: MerkleDB> ChainState<D> {
             }
 
             // update the left side of version window
-            self.min_height = if upper > self.ver_window {
-                upper.saturating_sub(self.ver_window)
-            } else {
-                0
-            };
+            if upper >= self.ver_window.saturating_add(1) {
+                self.min_height = upper.saturating_sub(self.ver_window);
+            }
 
             // ToDo: handle in async context to reduce performance impaction
             // handle snapshot if enabled
