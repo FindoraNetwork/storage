@@ -107,7 +107,7 @@ impl<D: MerkleDB> ChainState<D> {
         let mut cs = ChainState {
             _name: db_name,
             ver_window: opts.ver_window,
-            min_height: 1,
+            min_height: 0,
             pinned_height: Default::default(),
             version: Default::default(),
             snapshot_interval: Default::default(),
@@ -351,11 +351,9 @@ impl<D: MerkleDB> ChainState<D> {
 
             let last_min_height = self.min_height;
             // update the left side of version window
-            self.min_height = if upper >= self.ver_window.saturating_add(1) {
-                upper.saturating_sub(self.ver_window)
-            } else {
-                1
-            };
+            if upper >= self.ver_window.saturating_add(1) {
+                self.min_height = upper.saturating_sub(self.ver_window);
+            }
 
             // ToDo: handle in async context to reduce performance impaction
             // handle snapshot if enabled
