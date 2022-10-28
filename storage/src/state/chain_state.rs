@@ -712,19 +712,13 @@ impl<D: MerkleDB> ChainState<D> {
         let mut val = Ok((false, None));
 
         let _ = self.iterate_aux(&lower, &upper, order, &mut |(ver_k, v)| {
-            match Self::get_raw_versioned_key(&ver_k) {
-                Ok(k) => {
-                    if k.as_bytes().eq(key) {
-                        val = Ok((true, if !v.eq(&TOMBSTONE) { Some(v) } else { None }));
-                        return true;
-                    }
-                    false
-                }
-                Err(e) => {
-                    val = Err(e).c(d!("error reading aux value"));
-                    true
+            if let Ok(k) = Self::get_raw_versioned_key(&ver_k) {
+                if k.as_bytes().eq(key) {
+                    val = Ok((true, if !v.eq(&TOMBSTONE) { Some(v) } else { None }));
+                    return true;
                 }
             }
+            false
         });
         val
     }
