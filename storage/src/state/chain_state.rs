@@ -568,83 +568,97 @@ impl<D: MerkleDB> ChainState<D> {
         Ok(key[2..].join(SPLIT_BGN))
     }
 
-    /// height = current_height - ver_window
-    pub fn build_state_with_snapshots(&mut self, new_min_height: u64, interval: u64) -> KVBatch {
+    /// Make sure versioned keys before `min_height` have been moved to `base`
+    pub fn build_snapshots(&mut self, prev_interval: u64, interval: u64) -> KVBatch {
         let current_height = self.height().unwrap_or_default();
-        let prev_interval = self.snapshot_interval;
-        let prev_min_height = self.min_height;
+        let min_height = self.min_height;
 
-        // if new_min_height
-        //  == 0                : new_ver_window >= current_height
-        //  == prev_min_height  : new_ver_window >= ver_window
-        //  >  prev_min_height  : new_ver_widow > ver_window && new_ver_window < current_height
-        let mut batch = if new_min_height > prev_min_height {
-            // All versioned key-values before new_min_height moved to BASE
-            self.build_state_to(
-                Some(prev_min_height),
-                new_min_height.saturating_sub(1),
-                Some(Self::base_key_prefix()),
-                false,
-            )
-        } else if new_min_height == 0 && prev_min_height != 0 {
-            // remove keys in the base
-            self.remove_base()
-        } else {
-            vec![]
-        };
+        let mut batch = vec![];
 
-        if prev_interval != 0 && interval != prev_interval {
-            // remove all existed snapshots
-            // FixMe: make sure all snapshots are removed!
-            let mut height = prev_interval;
-            while height <= current_height {
-                let mut snapshot = self.remove_snapshot(height);
-                height += &prev_interval;
-                if !batch.is_empty() {
-                    batch.append(&mut snapshot);
+        if interval != prev_interval {
+            if prev_interval != 0 {
+                // remove all existed snapshots
+                // FixMe: make sure all snapshots are removed!
+                let mut height = prev_interval;
+                while height <= current_height {
+                    let mut snapshot = self.remove_snapshot(height);
+                    height += &prev_interval;
+                    if !batch.is_empty() {
+                        batch.append(&mut snapshot);
+                    }
                 }
             }
-        }
 
-        if interval != 0 && interval != prev_interval {
-            // need to reconstruct snapshots
-            let mut s = new_min_height;
-            let mut e = if new_min_height % interval == 0 {
-                new_min_height
-            } else {
-                (new_min_height / interval + 1) * interval
-            };
-            while e <= current_height {
-                let mut snapshot = self.create_snapshot(s, e);
-                let info = SnapShotInfo {
-                    start: s,
-                    end: e,
-                    count: snapshot.len() as u64,
-                    status: SnapShotStatus::Avail,
+            if interval != 0 {
+                // need to reconstruct snapshots
+                let mut s = min_height;
+                let mut e = if min_height % interval == 0 {
+                    min_height
+                } else {
+                    (min_height / interval + 1) * interval
                 };
-                batch.append(&mut snapshot);
-                s = e;
-                e = e.saturating_add(interval);
+                while e <= current_height {
+                    let mut snapshot = self.create_snapshot(s, e);
+                    let info = SnapShotInfo {
+                        start: s,
+                        end: e,
+                        count: snapshot.len() as u64,
+                        status: SnapShotStatus::Avail,
+                    };
+                    batch.append(&mut snapshot);
+                    s = e;
+                    e = e.saturating_add(interval);
 
-                self.snapshot_info.push_back(info);
+                    self.snapshot_info.push_back(info);
+                }
             }
-        } else {
+        } else if interval != 0 {
             // load snapshot metadata from aux db
-            let mut s = new_min_height + 1;
-            let mut e = new_min_height + prev_interval;
-            while e <= current_height {
-                let count = self.count_in_snapshot(e);
+            // FixMe: `s` could be incorrect
+            let mut s = min_height;
+            let mut snapshot_at = if min_height % interval == 0 {
+                min_height
+            } else {
+                (min_height / interval + 1) * interval
+            };
+            while snapshot_at <= current_height {
+                let count = self.count_in_snapshot(snapshot_at);
                 let info = SnapShotInfo {
                     start: s,
-                    end: e,
+                    end: snapshot_at,
                     count,
                     status: SnapShotStatus::Avail,
                 };
                 self.snapshot_info.push_back(info);
-                s = e;
-                e = e.saturating_add(interval);
+                s = snapshot_at;
+                snapshot_at = snapshot_at.saturating_add(interval);
             }
         }
+
+        batch
+    }
+
+    // Remove versioned keys before `height(not included)`
+    // Need a `commit` to actually remove these keys from persistent storage
+    fn remove_versioned_keys_before(&self, height: u64) -> KVBatch {
+        //Define upper and lower bounds for iteration
+        let lower = Prefix::new("VER".as_bytes());
+        let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height).as_bytes());
+
+        //Create an empty batch
+        let mut batch = KVBatch::new();
+
+        //Iterate aux data and delete keys within bounds
+        self.iterate_aux(
+            lower.begin().as_ref(),
+            upper.as_ref(),
+            IterOrder::Asc,
+            &mut |(k, _v)| -> bool {
+                //Delete the key from aux db
+                batch.push((k, None));
+                false
+            },
+        );
 
         batch
     }
@@ -727,6 +741,7 @@ impl<D: MerkleDB> ChainState<D> {
         count
     }
 
+    // height range is [s, e]
     fn build_state_to(
         &self,
         s: Option<u64>,
@@ -1000,23 +1015,16 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
-    fn clean_aux_db(&mut self, snapshot_interval: u64, ver_window: u64) {
+    fn clean_aux_db(&mut self, interval: u64, ver_window: u64) {
         // A ChainState with pinned height, should never call this function
         assert!(self.pinned_height.is_empty());
 
         //Get current height
         let current_height = self.height().unwrap_or(0);
         let prev_ver_window = self.ver_window;
+        let prev_interval = self.snapshot_interval;
 
         let mut batch = KVBatch::new();
-        // The default snapshot_interval is 0u64
-        // There is no need to update aux database if the interval is 0 and never changed.
-        if self.snapshot_interval != snapshot_interval {
-            batch.push((
-                SNAPSHOT_INTERVAL.to_vec(),
-                Some(snapshot_interval.to_string().into_bytes()),
-            ));
-        }
 
         let mut new_min_height = 0;
         if prev_ver_window != ver_window {
@@ -1024,20 +1032,45 @@ impl<D: MerkleDB> ChainState<D> {
                 VER_WINDOW.to_vec(),
                 Some(ver_window.to_string().into_bytes()),
             ));
-            // If the version window increases(ver_window > self.ver_window),
-            // the minimal height with versioned keys will keep unchanged.
-            if current_height > self.ver_window {
-                let mut min_height = current_height.saturating_sub(prev_ver_window);
-                // the version window size decreases
-                if ver_window < prev_ver_window {
-                    min_height = if ver_window < current_height {
-                        current_height.saturating_sub(ver_window)
+
+            if prev_ver_window < ver_window {
+                // no-more keys should move to `base`, just update new_min_height
+                if ver_window < current_height {
+                    new_min_height = current_height.saturating_sub(prev_ver_window);
+                } else {
+                    new_min_height = if prev_ver_window < current_height {
+                        // ver_window >= current_height > prev_ver_window
+                        current_height.saturating_sub(prev_ver_window)
                     } else {
-                        current_height
+                        // ver_window > prev_ver_window >= current_height
+                        // keep it as zero
+                        0
                     };
                 }
-                new_min_height = min_height;
+            } else {
+                // prev_ver_window > ver_window
+                if ver_window == 0 {
+                    // change versioned chain to non-versioned
+                    // remove `base` later, keep new_min_height as zero
+                } else {
+                    new_min_height = if ver_window < current_height {
+                        // 0 < ver_window < prev_ver_window <= current_height
+                        // 0 < ver_window <= current_height < prev_ver_window
+                        current_height.saturating_sub(ver_window)
+                    } else {
+                        // 0 <= current_height < ver_window < prev_ver_window
+                        0
+                    };
+                    // move more versioned keys to `base`
+                }
             }
+        } else {
+            // prev_ver_window == ver_window
+            new_min_height = if ver_window > 0 && ver_window < current_height {
+                current_height.saturating_sub(ver_window)
+            } else {
+                0
+            };
         }
 
         // Update aux version if needed
@@ -1048,19 +1081,44 @@ impl<D: MerkleDB> ChainState<D> {
             ));
         }
 
-        if current_height == 0 || current_height < prev_ver_window + 1 {
-            //Commit this batch at base height H
-            if !batch.is_empty() && self.db.commit(batch, true).is_err() {
-                panic!("error building base chain state");
+        if current_height > 0 {
+            if ver_window == 0 {
+                assert_eq!(new_min_height, 0);
+                batch.append(&mut self.remove_base());
             }
-            self.snapshot_interval = snapshot_interval;
-            self.ver_window = ver_window;
-            self.min_height = new_min_height;
-            return;
+
+            if new_min_height > 0 {
+                assert_ne!(ver_window, 0);
+                // Move versioned keys before height `new_min_height` to `base`
+                batch.append(&mut self.build_state(
+                    new_min_height.saturating_sub(1),
+                    Some(Self::base_key_prefix()),
+                ));
+
+                // Remove versioned keys before `new_min_height`
+                batch.append(&mut self.remove_versioned_keys_before(new_min_height));
+            }
         }
 
-        //Get batch for state at H = self.min_height
-        batch.append(&mut self.build_state_with_snapshots(new_min_height, snapshot_interval));
+        self.ver_window = ver_window;
+        self.min_height = new_min_height;
+
+        // The default snapshot_interval is 0u64
+        // There is no need to update aux database if the interval is 0 and never changed.
+        if prev_interval != interval {
+            batch.push((
+                SNAPSHOT_INTERVAL.to_vec(),
+                Some(interval.to_string().into_bytes()),
+            ));
+        }
+
+        // handle snapshots
+        if current_height > new_min_height {
+            batch.append(&mut self.build_snapshots(prev_interval, interval));
+        }
+
+        // It's safe to update in-memory metadata
+        self.snapshot_interval = interval;
 
         //Commit this batch at base height H
         if self.db.commit(batch, true).is_err() {
@@ -1069,34 +1127,6 @@ impl<D: MerkleDB> ChainState<D> {
 
         // Read back to make sure previous commit works well and update in-memory field
         self.version = self.get_aux_version().expect("cannot read back version");
-
-        // It's safe to update in-memory metadata
-        self.snapshot_interval = snapshot_interval;
-        self.ver_window = ver_window;
-        self.min_height = new_min_height;
-
-        //Define upper and lower bounds for iteration
-        let lower = Prefix::new("VER".as_bytes());
-        let upper =
-            Prefix::new("VER".as_bytes()).push(Self::height_str(self.min_height).as_bytes());
-
-        //Create an empty batch
-        let mut batch = KVBatch::new();
-
-        //Iterate aux data and delete keys within bounds
-        self.iterate_aux(
-            lower.begin().as_ref(),
-            upper.as_ref(),
-            IterOrder::Asc,
-            &mut |(k, _v)| -> bool {
-                //Delete the key from aux db
-                batch.push((k, None));
-                false
-            },
-        );
-
-        //commit aux batch
-        let _ = self.db.commit(batch, true);
     }
 
     /// Gets current versioning window of the chain-state
