@@ -981,15 +981,14 @@ impl<D: MerkleDB> ChainState<D> {
         }
 
         //Get batch for state at H = current_height - ver_window
-        batch.append(&mut self.build_state(
-            current_height - self.ver_window,
-            Some(Self::base_key_prefix()),
-        ));
+        batch.append(
+            &mut self
+                .build_state_with_snapshots(current_height - self.ver_window, snapshot_interval),
+        );
 
         //Commit this batch at base height H
         if self.db.commit(batch, true).is_err() {
-            println!("error building base chain state");
-            return;
+            panic!("error building base chain state");
         }
 
         self.min_height = current_height.saturating_sub(self.ver_window);
