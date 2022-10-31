@@ -1,4 +1,7 @@
-use storage::state::ChainState;
+use fin_db::FinDB;
+use std::{env::temp_dir, time::SystemTime};
+use storage::db::MerkleDB;
+use storage::state::{ChainState, ChainStateOpts};
 use temp_db::TempFinDB;
 
 #[test]
@@ -285,10 +288,10 @@ fn gen_cs(ver_window: u64, interval: u64) -> ChainState<TempFinDB> {
     ChainState::create_with_opts(fdb, opts)
 }
 
-fn apply_operations(
-    chain: &mut ChainState<TempFinDB>,
+fn apply_operations<DB: MerkleDB>(
+    chain: &mut ChainState<DB>,
     operations: Vec<(u64, Option<Vec<u8>>)>,
-    max_height: u64,
+    height_cap: u64,
 ) {
     let key = b"test_key".to_vec();
     let mut h = 0;
@@ -302,19 +305,30 @@ fn apply_operations(
         h += 1;
     }
 
-    while h <= max_height {
+    while h < height_cap {
         chain.commit(vec![], h, false).unwrap();
         h += 1;
     }
 }
 
-fn verify_expectations(chain: &ChainState<TempFinDB>, expectations: Vec<(u64, Option<Vec<u8>>)>) {
+fn verify_expectations<DB: MerkleDB>(
+    chain: &ChainState<DB>,
+    expectations: Vec<(u64, Option<Vec<u8>>)>,
+) {
     for e in expectations {
         let val = match chain.get_ver(b"test_key", e.0) {
             Err(e) if e.to_string().contains("no versioning info") => None,
             Ok(v) => v,
             _ => panic!("failed!"),
         };
+        if val != e.1 {
+            println!(
+                "Error at {} expect: {:?} actual: {:?}",
+                e.0,
+                e.1.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()),
+                val.as_ref().and_then(|v| String::from_utf8(v.clone()).ok())
+            );
+        }
         assert_eq!(val, e.1);
     }
 }
@@ -413,4 +427,99 @@ fn test_commit_at_zero() {
     assert_eq!(chain.get(key.as_slice()).unwrap(), Some(val.clone()));
     assert_eq!(chain.get_ver(key.as_slice(), 0).unwrap(), Some(val.clone()));
     assert_eq!(chain.get_ver(key.as_slice(), 1).unwrap(), Some(val));
+}
+
+fn gen_findb_cs(
+    exist: Option<String>,
+    ver_window: u64,
+    interval: u64,
+) -> (String, ChainState<FinDB>) {
+    let path = exist.unwrap_or_else(|| {
+        let time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut path = temp_dir();
+        path.push(format!("findb–{}", time));
+        path.as_os_str().to_str().unwrap().to_string()
+    });
+
+    let fdb = FinDB::open(&path).unwrap_or_else(|_| panic!("Failed to open a findb at {}", path));
+    let opts = ChainStateOpts {
+        name: Some("findb".to_string()),
+        ver_window,
+        snapshot_interval: interval,
+        cleanup_aux: false,
+    };
+
+    (path, ChainState::create_with_opts(fdb, opts))
+}
+
+#[test]
+fn test_reload_with_snapshots() {
+    let (path, cs) = gen_findb_cs(None, 0, 0);
+    drop(cs);
+    let (path, cs) = gen_findb_cs(Some(path), 100, 10);
+    drop(cs);
+    let (path, cs) = gen_findb_cs(Some(path), 111, 3);
+    drop(cs);
+    let (path, cs) = gen_findb_cs(Some(path), 20, 4);
+    drop(cs);
+    let (_path, cs) = gen_findb_cs(Some(path), 0, 0);
+    drop(cs);
+}
+
+fn commit_n(chain: &mut ChainState<FinDB>, n: u64) {
+    let mut operations = vec![];
+    for h in 0..n {
+        let val = format!("val-{}", h);
+        operations.push((h, Some(val.into_bytes())));
+    }
+
+    apply_operations(chain, operations, n);
+}
+
+fn compare_n(chain: &ChainState<FinDB>, s: u64, e: u64) {
+    let mut expectations = vec![];
+    for h in s..e {
+        let val = format!("val-{}", h);
+        expectations.push((h, Some(val.into_bytes())));
+    }
+    verify_expectations(chain, expectations);
+}
+
+fn expect_same(chain: &ChainState<FinDB>, s: u64, e: u64, val: Option<Vec<u8>>) {
+    let mut expectations = vec![];
+    for h in s..e {
+        expectations.push((h, val.clone()));
+    }
+    verify_expectations(chain, expectations);
+}
+
+#[test]
+fn test_reload_with_snapshots_1() {
+    let (path, mut cs) = gen_findb_cs(None, 100, 10);
+    commit_n(&mut cs, 200);
+    expect_same(&cs, 0, 98, None);
+    compare_n(&cs, 98, 99);
+    expect_same(&cs, 200, 210, Some(format!("val-{}", 199).into_bytes()));
+    drop(cs);
+
+    println!("ver_window 100, interval 5");
+    let (path, cs) = gen_findb_cs(Some(path), 100, 5);
+    // current height 199, min_height 99
+    // height 98 is in the base but not squashed
+    expect_same(&cs, 0, 98, None);
+    compare_n(&cs, 98, 200);
+    expect_same(&cs, 200, 210, Some(format!("val-{}", 199).into_bytes()));
+    drop(cs);
+
+    println!("ver_window 111, interval 3");
+    let (_, cs) = gen_findb_cs(Some(path), 111, 3);
+    // current height 199, ver_window 111 min_height 88
+    // height 87 is in the base but not squashed
+    expect_same(&cs, 0, 88, None);
+    compare_n(&cs, 88, 200);
+    expect_same(&cs, 200, 210, Some(format!("val-{}", 199).into_bytes()));
+    drop(cs);
 }

@@ -943,10 +943,15 @@ impl<D: MerkleDB> ChainState<D> {
             self.snapshot_interval = snapshot_interval;
         }
 
+        //Get batch for state at H = current_height - ver_window
+        batch.append(
+            &mut self
+                .build_state_with_snapshots(current_height - self.ver_window, snapshot_interval),
+        );
+
         //Commit this batch at base height H
         if self.db.commit(batch, true).is_err() {
-            println!("error building base chain state");
-            return;
+            panic!("error building base chain state");
         }
 
         self.min_height = current_height - self.ver_window;
