@@ -1,6 +1,3 @@
-#[cfg(test)]
-mod chain_state;
-
 use fin_db::{FinDB, RocksDB};
 use mem_db::MemoryDB;
 use parking_lot::RwLock;

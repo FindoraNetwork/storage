@@ -501,7 +501,7 @@ fn test_reload_with_snapshots_1() {
     let (path, mut cs) = gen_findb_cs(None, 100, 10);
     commit_n(&mut cs, 200);
     expect_same(&cs, 0, 98, None);
-    compare_n(&cs, 98, 99);
+    compare_n(&cs, 98, 200);
     expect_same(&cs, 200, 210, Some(format!("val-{}", 199).into_bytes()));
     drop(cs);
 
