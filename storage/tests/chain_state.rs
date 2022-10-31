@@ -138,8 +138,9 @@ fn test_create_snapshot_1() {
         cleanup_aux: false,
     };
     let mut chain = ChainState::create_with_opts(fdb, opts);
+    assert!(chain.get_snapshots_info().is_empty());
 
-    for h in 1..20 {
+    for h in 0..20 {
         assert!(chain.commit(vec![], h, true).is_ok());
         assert!(chain.get_snapshots_info().is_empty());
     }
@@ -199,6 +200,7 @@ fn test_create_snapshot_3() {
     let snapshot_dropped_at = opts.ver_window.saturating_add(interval);
     let mut chain = ChainState::create_with_opts(fdb, opts);
 
+    println!("{:?}", chain.get_snapshots_info());
     assert!(chain.get_snapshots_info().is_empty());
 
     for h in 0..snapshot_created_at {
@@ -518,8 +520,9 @@ fn test_reload_with_snapshots_1() {
     let (_, cs) = gen_findb_cs(Some(path), 111, 3);
     // current height 199, ver_window 111 min_height 88
     // height 87 is in the base but not squashed
-    expect_same(&cs, 0, 88, None);
-    compare_n(&cs, 88, 200);
+    // but we donot have versioned keys before height 98
+    expect_same(&cs, 0, 98, None);
+    compare_n(&cs, 98, 200);
     expect_same(&cs, 200, 210, Some(format!("val-{}", 199).into_bytes()));
     drop(cs);
 }
