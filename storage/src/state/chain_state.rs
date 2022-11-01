@@ -20,7 +20,8 @@ const HEIGHT_KEY: &[u8; 6] = b"Height";
 const VER_WINDOW: &[u8; 9] = b"VerWindow";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
 const SNAPSHOT_INTERVAL: &[u8; 19] = b"AuxSnapShotInterval";
-const CUR_AUX_VERSION: u64 = 0x01;
+const AUX_VERSION_01: u64 = 0x01;
+const AUX_VERSION_02: u64 = 0x02;
 const SPLIT_BGN: &str = "_";
 const TOMBSTONE: [u8; 1] = [206u8];
 
@@ -116,16 +117,72 @@ impl<D: MerkleDB> ChainState<D> {
             db,
         };
 
-        cs.version = cs.get_aux_version().expect("Need a valid version");
-        cs.snapshot_interval = cs
-            .aux_snapshot_interval()
-            .expect("Need a valid snapshot interval");
-        cs.ver_window = cs.aux_ver_window().expect("Need a valid ver_window");
+        let version = cs
+            .get_aux_version()
+            .expect("Failed to read a valid version from db");
+        let current_height = cs.height().expect("Failed to read aux db");
+
+        let (prev_interval, prev_ver_window, prev_min_height) = match version {
+            Some(v) if v >= AUX_VERSION_02 => {
+                let interval = cs
+                    .aux_snapshot_interval()
+                    .expect("Failed to read snapshot interval from db")
+                    .expect("Missing snapshot interval");
+                let ver_window = cs
+                    .aux_ver_window()
+                    .expect("Failed to read ver_window from db")
+                    .expect("Missing ver_window");
+                let min_height = cs.aux_min_height().expect("failed to read aux db");
+                (interval, ver_window, min_height.unwrap_or(current_height))
+            }
+            Some(v) if v == AUX_VERSION_01 => {
+                // keys in aux db are divided to `base` and `ver` parts
+                let min_height = cs
+                    .aux_min_height()
+                    .expect("Failed to read aux db")
+                    .expect("Invalid min_height");
+                assert!(current_height >= min_height);
+                //unreachable!();
+                (0, current_height.saturating_sub(min_height), min_height)
+            }
+            Some(_) => {
+                unreachable!()
+            }
+            None => {
+                // 1. chainstate before aux_version_01
+                // 2. chainstate could ether be versioned or non-versioned
+                // 3. load from aux db to determine the minimal height
+                if let Some(_min_height) = cs.aux_min_height().expect("Failed to read aux db") {
+                    // TODO: move keys at height min_height to base
+                    unreachable!();
+                    //(None, Some(current_height.saturating_sub(min_height)))
+                } else {
+                    // non-versioned or a fresh new chain
+                    let mut batch = KVBatch::new();
+                    // TODO: move keys in state to base
+                    batch.push((
+                        AUX_VERSION.to_vec(),
+                        Some(AUX_VERSION_02.to_string().into_bytes()),
+                    ));
+                    batch.push((VER_WINDOW.to_vec(), Some(0.to_string().into_bytes())));
+                    batch.push((SNAPSHOT_INTERVAL.to_vec(), Some(0.to_string().into_bytes())));
+                    cs.db.commit(batch, true).expect("failed to commit db");
+
+                    (0, 0, current_height.saturating_add(1))
+                }
+            }
+        };
 
         if opts.cleanup_aux {
             cs.clean_aux().unwrap();
         } else {
-            cs.clean_aux_db(opts.snapshot_interval, opts.ver_window);
+            cs.clean_aux_db(
+                current_height,
+                prev_interval,
+                prev_ver_window,
+                opts.snapshot_interval,
+                opts.ver_window,
+            );
         }
 
         cs
@@ -180,41 +237,48 @@ impl<D: MerkleDB> ChainState<D> {
     /// Get aux database version
     ///
     /// The default version is ox00
-    fn get_aux_version(&self) -> Result<u64> {
+    fn get_aux_version(&self) -> Result<Option<u64>> {
         if let Some(version) = self.get_aux(AUX_VERSION.to_vec().as_ref())? {
             let ver_str = String::from_utf8(version).c(d!("Invalid aux version string"))?;
-            return ver_str
+            let version = ver_str
                 .parse::<u64>()
-                .c(d!("aux version should be a valid 64-bit long integer"));
+                .c(d!("aux version should be a valid 64-bit long integer"))?;
+            Ok(Some(version))
+        } else {
+            Ok(None)
         }
-
-        Ok(0x00)
     }
 
     /// Get snapshot interval in aux db
     ///
     /// The default version is 0u64
-    fn aux_snapshot_interval(&self) -> Result<u64> {
-        let raw_vec = self
-            .get_aux(SNAPSHOT_INTERVAL.to_vec().as_ref())?
-            .unwrap_or_else(|| "0".to_string().into_bytes());
-        let raw_str = String::from_utf8(raw_vec).c(d!("Invalid snapshot interval string"))?;
-        raw_str.parse::<u64>().c(d!(
-            "snapshot interval should be a valid 64-bit long integer"
-        ))
+    fn aux_snapshot_interval(&self) -> Result<Option<u64>> {
+        let raw_vec = self.get_aux(SNAPSHOT_INTERVAL.to_vec().as_ref())?;
+        if let Some(raw) = raw_vec {
+            let raw_str = String::from_utf8(raw).c(d!("Invalid snapshot interval string"))?;
+            let interval = raw_str.parse::<u64>().c(d!(
+                "snapshot interval should be a valid 64-bit long integer"
+            ))?;
+            Ok(Some(interval))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get ver_window in aux db
     ///
     /// The default value is 0u64
-    fn aux_ver_window(&self) -> Result<u64> {
-        let raw_vec = self
-            .get_aux(VER_WINDOW.to_vec().as_ref())?
-            .unwrap_or_else(|| "0".to_string().into_bytes());
-        let raw_str = String::from_utf8(raw_vec).c(d!("Invalid version window string"))?;
-        raw_str.parse::<u64>().c(d!(
-            "The version window should be a valid 64-bit long integer"
-        ))
+    fn aux_ver_window(&self) -> Result<Option<u64>> {
+        let raw_vec = self.get_aux(VER_WINDOW.to_vec().as_ref())?;
+        if let Some(raw) = raw_vec {
+            let raw_str = String::from_utf8(raw).c(d!("Invalid version window string"))?;
+            let version = raw_str.parse::<u64>().c(d!(
+                "The version window should be a valid 64-bit long integer"
+            ))?;
+            Ok(Some(version))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get snapshot info
@@ -404,6 +468,8 @@ impl<D: MerkleDB> ChainState<D> {
                     aux_batch.append(&mut batch);
                 }
             }
+        } else {
+            self.min_height = height;
         }
 
         // Store the current height in auxiliary batch
@@ -566,6 +632,46 @@ impl<D: MerkleDB> ChainState<D> {
             return Err(eg!("invalid key pattern"));
         }
         Ok(key[2..].join(SPLIT_BGN))
+    }
+
+    fn get_versioned_key_height(key: &[u8]) -> Result<u64> {
+        let key: Vec<_> = str::from_utf8(key)
+            .c(d!("key parse error"))?
+            .split(SPLIT_BGN)
+            .collect();
+        if key.len() < 3 {
+            return Err(eg!("invalid key pattern"));
+        }
+        key[1].parse::<u64>().c(d!("Invalid height string"))
+    }
+
+    // load the minimal height of versioned keys from aux db
+    fn aux_min_height(&self) -> Result<Option<u64>> {
+        //Define upper and lower bounds for iteration
+        let bound = Prefix::new("VER".as_bytes());
+
+        let mut res = Ok(None);
+
+        //Iterate aux data and delete keys within bounds
+        self.iterate_aux(
+            bound.begin().as_ref(),
+            bound.end().as_ref(),
+            IterOrder::Asc,
+            &mut |(k, _v)| -> bool {
+                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                if raw_key.is_empty() {
+                    false
+                } else {
+                    res = match Self::get_versioned_key_height(&k) {
+                        Ok(h) => Ok(Some(h)),
+                        Err(e) => Err(e),
+                    };
+                    true
+                }
+            },
+        );
+
+        res
     }
 
     /// Make sure versioned keys before `min_height` have been moved to `base`
@@ -955,6 +1061,9 @@ impl<D: MerkleDB> ChainState<D> {
     /// Returns None if the key was deleted or invalid at height H
     #[cfg(feature = "optimize_get_ver")]
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        if self.ver_window == 0 {
+            return Err(eg!("non-versioned chain"));
+        }
         self.find_versioned_key_with_snapshots(key, height)
     }
 
@@ -1015,14 +1124,17 @@ impl<D: MerkleDB> ChainState<D> {
 
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
-    fn clean_aux_db(&mut self, interval: u64, ver_window: u64) {
+    fn clean_aux_db(
+        &mut self,
+        current_height: u64,
+        prev_interval: u64,
+        prev_ver_window: u64,
+        prev_min_height: u64,
+        interval: u64,
+        ver_window: u64,
+    ) {
         // A ChainState with pinned height, should never call this function
         assert!(self.pinned_height.is_empty());
-
-        //Get current height
-        let current_height = self.height().unwrap_or(0);
-        let prev_ver_window = self.ver_window;
-        let prev_interval = self.snapshot_interval;
 
         let mut batch = KVBatch::new();
 
@@ -1127,6 +1239,7 @@ impl<D: MerkleDB> ChainState<D> {
 
         // Read back to make sure previous commit works well and update in-memory field
         self.version = self.get_aux_version().expect("cannot read back version");
+        assert_eq!(self.version, AUX_VERSION_02);
     }
 
     /// Gets current versioning window of the chain-state
@@ -1134,7 +1247,7 @@ impl<D: MerkleDB> ChainState<D> {
     /// returns a range of the current versioning window [lower, upper)
     pub fn get_ver_range(&self) -> Result<Range<u64>> {
         let upper = self.height().c(d!("error reading current height"))?;
-        let mut lower = 1;
+        let mut lower = 0;
         if upper > self.ver_window {
             lower = upper.saturating_sub(self.ver_window);
         }

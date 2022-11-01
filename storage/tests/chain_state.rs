@@ -472,13 +472,17 @@ fn test_reload_with_snapshots() {
 }
 
 fn commit_n(chain: &mut ChainState<FinDB>, n: u64) {
+    commit_range(chain, 0, n);
+}
+
+fn commit_range(chain: &mut ChainState<FinDB>, s: u64, e: u64) {
     let mut operations = vec![];
-    for h in 0..n {
+    for h in s..e {
         let val = format!("val-{}", h);
         operations.push((h, Some(val.into_bytes())));
     }
 
-    apply_operations(chain, operations, n);
+    apply_operations(chain, operations, e);
 }
 
 fn compare_n(chain: &ChainState<FinDB>, s: u64, e: u64) {
@@ -496,6 +500,28 @@ fn expect_same(chain: &ChainState<FinDB>, s: u64, e: u64, val: Option<Vec<u8>>) 
         expectations.push((h, val.clone()));
     }
     verify_expectations(chain, expectations);
+}
+
+#[test]
+// increase ver_window case 1
+fn test_chain_reload_with_ver_window_1() {
+    let (path, mut cs) = gen_findb_cs(None, 0, 0);
+    commit_n(&mut cs, 100);
+    assert!(cs.get_ver(b"test_key", 99).is_err());
+    assert_eq!(cs.get(b"test_key").unwrap(), Some(b"val-99".to_vec()));
+    drop(cs);
+
+    println!("ver_window 100 interval 0");
+    let (path, mut cs) = gen_findb_cs(Some(path), 100, 0);
+    assert!(cs.get_ver(b"test_key", 99).is_ok());
+    assert_eq!(cs.get(b"test_key").unwrap(), Some(b"val-99".to_vec()));
+    assert_eq!(
+        cs.get_ver(b"test_key", 99).unwrap(),
+        Some(b"val-99".to_vec())
+    );
+    commit_range(&mut cs, 100, 100);
+
+    drop(cs);
 }
 
 #[test]
