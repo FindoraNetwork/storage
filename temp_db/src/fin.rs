@@ -76,6 +76,7 @@ impl MerkleDB for TempFinDB {
     fn clean_aux(&mut self) -> Result<()> {
         self.deref_mut().clean_aux()
     }
+    fn export_aux(&mut self, cs: &mut Self) -> Result<()>{self.deref_mut().export_aux(cs)}
 }
 
 impl Deref for TempFinDB {
@@ -179,6 +180,47 @@ mod tests {
         assert_eq!(fdb.get(b"k10").unwrap(), Some(b"v12".to_vec()));
         assert_eq!(fdb.get(b"k20").unwrap(), Some(b"v20".to_vec()));
         assert_eq!(fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
+    }
+
+    #[test]
+    fn db_export_aux() {
+        let path = thread::current().name().unwrap().to_owned();
+        let mut fdb = TempFinDB::open(path).expect("failed to open db");
+
+        fdb.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))],false)
+            .unwrap();
+        fdb.commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
+            .unwrap();
+
+        // update data at height
+        fdb.commit(vec![
+            (b"k10".to_vec(), Some(b"v12".to_vec())),
+            (b"k20".to_vec(), Some(b"v20".to_vec())),
+        ],false)
+            .unwrap();
+        // commit data with aux
+        fdb.commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
+            .unwrap();
+
+        // get and compare
+        assert_eq!(fdb.get_aux(b"k10").unwrap(), Some(b"v12".to_vec()));
+        assert_eq!(fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
+
+        let mut cs_fdb = TempFinDB::new().unwrap();
+        fdb.export_aux(&mut cs_fdb);
+        assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v12".to_vec()));
+        assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
+
+        cs_fdb.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))],false)
+            .unwrap();
+        cs_fdb.commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
+            .unwrap();
+
+        assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"100".to_vec());
     }
 
     #[test]

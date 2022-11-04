@@ -76,6 +76,7 @@ impl MerkleDB for TempRocksDB {
     fn clean_aux(&mut self) -> Result<()> {
         self.deref_mut().clean_aux()
     }
+    fn export_aux(&mut self, cs: &mut Self) -> Result<()>{self.deref_mut().export_aux(cs)}
 }
 
 impl Deref for TempRocksDB {
@@ -118,6 +119,8 @@ mod tests {
         )
         .unwrap();
 
+        let mut new_db = TempRocksDB::new().unwrap();
+        db.export_aux(&mut new_db);
         // get and compare
         assert_eq!(db.get(b"k10").unwrap().unwrap(), b"v10".to_vec());
         assert_eq!(db.get(b"k20").unwrap().unwrap(), b"v20".to_vec());
