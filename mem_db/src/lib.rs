@@ -169,6 +169,16 @@ impl MerkleDB for MemoryDB {
         self.aux.clear();
         Ok(())
     }
+    fn export_aux(&mut self, cs: &mut Self) -> Result<()> {
+        for (k, v) in &self.aux {
+            if let Some(value) = v {
+                let expected = vec![(k.to_vec(), Some(value.to_vec()))];
+                cs.commit(expected, false)
+                    .map_err(|_e| eg!("export_aux failure"))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Drop for MemoryDB {
@@ -256,6 +266,64 @@ mod tests {
         assert_eq!(fdb.get(b"k10").unwrap(), Some(b"v12".to_vec()));
         assert_eq!(fdb.get(b"k20").unwrap(), Some(b"v20".to_vec()));
         assert_eq!(fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
+    }
+
+    #[test]
+    fn db_export_aux() {
+        let mut fdb = MemoryDB::new();
+
+        fdb.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))], false)
+            .unwrap();
+        fdb.commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
+            .unwrap();
+
+        // update data at height
+        fdb.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v12".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            false,
+        )
+        .unwrap();
+        // commit data with aux
+        fdb.commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
+            .unwrap();
+
+        // get and compare
+        assert_eq!(fdb.get_aux(b"k10").unwrap(), Some(b"v12".to_vec()));
+        assert_eq!(fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
+
+        let mut cs_fdb = MemoryDB::new();
+        fdb.export_aux(&mut cs_fdb).unwrap();
+        assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v12".to_vec()));
+        assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
+
+        cs_fdb
+            .commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))], false)
+            .unwrap();
+        cs_fdb
+            .commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
+            .unwrap();
+
+        assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"100".to_vec());
+
+        let mut new_cs_fdb = MemoryDB::new();
+        cs_fdb.export_aux(&mut new_cs_fdb).unwrap();
+        new_cs_fdb
+            .commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
+            .unwrap();
+
+        assert_eq!(new_cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(new_cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(
+            new_cs_fdb.get_aux(b"height").unwrap().unwrap(),
+            b"101".to_vec()
+        );
     }
 
     #[test]
