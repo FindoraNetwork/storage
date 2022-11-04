@@ -129,6 +129,9 @@ impl MerkleDB for FinDB {
     fn clean_aux(&mut self) -> Result<()> {
         self.db.clean_aux().map_err(|e| eg!(e))
     }
+    fn export_aux(&mut self,cs: &mut Self) -> Result<()> {
+        self.db.export_aux(&mut cs.db).map_err(|e| eg!(e))
+    }
 }
 
 /// Rocks db
@@ -294,6 +297,16 @@ impl MerkleDB for RocksDB {
         self.db.write_opt(batch, &opts).c(d!())?;
         self.db.flush_cf(state_cf).c(d!())?;
 
+        Ok(())
+    }
+    fn export_aux(&mut self,cs: &mut Self) -> Result<()>{
+        let  aux_cf = self.db.cf_handle(CF_STATE).unwrap();
+        for (k, v) in self.db.iterator_cf(aux_cf, IteratorMode::Start) {
+            let expected = vec![
+                (k.to_vec(), Some(v.to_vec())),
+            ];
+            cs.put_batch(expected).c(d!())?;
+        }
         Ok(())
     }
 }
