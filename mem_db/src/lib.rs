@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
 
         let mut cs_fdb = MemoryDB::new();
-        fdb.export_aux(&mut cs_fdb);
+        fdb.export_aux(&mut cs_fdb).unwrap();
         assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v12".to_vec()));
         assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
         assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
@@ -285,6 +285,15 @@ mod tests {
         assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
         assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
         assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"100".to_vec());
+
+        let mut new_cs_fdb = MemoryDB::new();
+        cs_fdb.export_aux(&mut new_cs_fdb).unwrap();
+        new_cs_fdb.commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
+            .unwrap();
+
+        assert_eq!(new_cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(new_cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
+        assert_eq!(new_cs_fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
     }
 
     #[test]
