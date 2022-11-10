@@ -5,7 +5,7 @@ use temp_db::TempFinDB;
 fn test_current_window() {
     let ver_window = 2;
     let fdb = TempFinDB::new().expect("failed to create temp findb");
-    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window, false);
+    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window);
 
     assert!(chain.current_window().map(|t| t == (1, 0)).is_ok());
 
@@ -26,7 +26,7 @@ fn test_current_window() {
 fn test_pin_height() {
     let ver_window = 3;
     let fdb = TempFinDB::new().expect("failed to create temp findb");
-    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window, false);
+    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window);
     assert!(chain.commit(vec![], 1, true).is_ok());
     assert!(chain.commit(vec![], 2, true).is_ok());
     assert!(chain.commit(vec![], 3, true).is_ok());
@@ -45,7 +45,7 @@ fn test_pin_height() {
 fn test_pin_extend_window() {
     let ver_window = 2;
     let fdb = TempFinDB::new().expect("failed to create temp findb");
-    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window, false);
+    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window);
 
     assert!(chain.commit(vec![], 1, true).is_ok());
     assert!(chain.commit(vec![], 2, true).is_ok());
@@ -61,7 +61,7 @@ fn test_pin_extend_window() {
 fn test_pin_height_error() {
     let ver_window = 1;
     let fdb = TempFinDB::new().expect("failed to create temp findb");
-    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window, false);
+    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window);
 
     // future height
     assert!(chain.pin_at(1).is_err());
@@ -76,7 +76,7 @@ fn test_pin_height_error() {
 fn test_unpin_height() {
     let ver_window = 1;
     let fdb = TempFinDB::new().expect("failed to create temp findb");
-    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window, false);
+    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window);
 
     assert!(chain.commit(vec![], 1, true).is_ok());
     assert!(chain.commit(vec![], 2, true).is_ok());
@@ -97,7 +97,7 @@ fn test_unpin_height() {
 fn test_unpin_shrink_window() {
     let ver_window = 2;
     let fdb = TempFinDB::new().expect("failed to create temp findb");
-    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window, false);
+    let mut chain = ChainState::new(fdb, "test".to_string(), ver_window);
 
     assert!(chain.commit(vec![], 1, true).is_ok());
     assert!(chain.commit(vec![], 2, true).is_ok());
@@ -114,7 +114,7 @@ fn test_unpin_shrink_window() {
 #[test]
 fn test_zero_window() {
     let fdb = TempFinDB::new().expect("failed to create temp findb");
-    let mut chain = ChainState::new(fdb, "test".to_string(), 0, false);
+    let mut chain = ChainState::new(fdb, "test".to_string(), 0);
 
     for h in 1..4 {
         assert!(chain.commit(vec![], h, true).is_ok());
