@@ -36,6 +36,15 @@ pub struct ChainState<D: MerkleDB> {
     db: D,
 }
 
+/// Configurable options
+#[derive(Default, Clone, Debug)]
+pub struct ChainStateOpts {
+    pub name: Option<String>,
+    pub ver_window: u64,
+    pub _snapshot_interval: u64,
+    pub cleanup_aux: bool,
+}
+
 /// Implementation of of the concrete ChainState struct
 impl<D: MerkleDB> ChainState<D> {
     /// Creates a new instance of the ChainState.
@@ -44,16 +53,25 @@ impl<D: MerkleDB> ChainState<D> {
     /// MerkleDB trait is assigned.
     ///
     /// Returns the implicit struct
-    pub fn new(db: D, name: String, ver_window: u64, is_fresh: bool) -> Self {
-        let mut db_name = String::from("chain-state");
-        if !name.is_empty() {
-            db_name = name;
-        }
+    pub fn new(db: D, name: String, ver_window: u64) -> Self {
+        let opts = ChainStateOpts {
+            name: if name.is_empty() { None } else { Some(name) },
+            ver_window,
+            cleanup_aux: false,
+            ..Default::default()
+        };
+
+        Self::create_with_opts(db, opts)
+    }
+    /// Create a new instance of ChainState with user specified options
+    ///
+    pub fn create_with_opts(db: D, opts: ChainStateOpts) -> Self {
+        let db_name = opts.name.unwrap_or_else(|| String::from("chain-state"));
 
         let mut cs = ChainState {
             _name: db_name,
-            ver_window,
-            min_height: 1,
+            ver_window: opts.ver_window,
+            min_height: 0,
             pinned_height: Default::default(),
             version: Default::default(),
             db,
@@ -61,7 +79,7 @@ impl<D: MerkleDB> ChainState<D> {
 
         cs.version = cs.get_aux_version().expect("Need a valid version");
 
-        if is_fresh {
+        if opts.cleanup_aux {
             cs.clean_aux().unwrap();
         } else {
             cs.clean_aux_db();
@@ -273,10 +291,10 @@ impl<D: MerkleDB> ChainState<D> {
             }
 
             // update the left side of version window
-            self.min_height = if upper >= self.ver_window.saturating_add(1) {
+            self.min_height = if upper > self.ver_window {
                 upper.saturating_sub(self.ver_window)
             } else {
-                1
+                0
             };
         }
 
@@ -626,7 +644,7 @@ impl<D: MerkleDB> ChainState<D> {
             return;
         }
 
-        self.min_height = current_height - self.ver_window + 1;
+        self.min_height = current_height - self.ver_window;
         //Get batch for state at H = current_height - ver_window
         let mut batch = self.build_state(
             current_height - self.ver_window,
