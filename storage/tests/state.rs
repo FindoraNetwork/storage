@@ -6,6 +6,7 @@ use mem_db::MemoryDB;
 use parking_lot::RwLock;
 use rand::Rng;
 use std::{sync::Arc, thread};
+use storage::state::chain_state::ChainStateOpts;
 use storage::{
     db::{IterOrder, KVBatch, KValue, MerkleDB},
     state::{ChainState, State},
@@ -841,12 +842,7 @@ fn test_snapshot() {
 #[test]
 fn test_state_at() {
     let fdb = TempFinDB::new().expect("failed to create fin db");
-    let chain = Arc::new(RwLock::new(ChainState::new(
-        fdb,
-        "test_db".to_string(),
-        2,
-        false,
-    )));
+    let chain = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string(), 2)));
     let state = State::new(chain.clone(), true);
 
     assert!(chain

@@ -70,8 +70,8 @@ impl<D: MerkleDB> ChainState<D> {
 
         let mut cs = ChainState {
             _name: db_name,
-            ver_window,
-            min_height: 1,
+            ver_window: opts.ver_window,
+            min_height: 0,
             pinned_height: Default::default(),
             version: Default::default(),
             db,
@@ -291,10 +291,10 @@ impl<D: MerkleDB> ChainState<D> {
             }
 
             // update the left side of version window
-            self.min_height = if upper >= self.ver_window.saturating_add(1) {
+            self.min_height = if upper > self.ver_window {
                 upper.saturating_sub(self.ver_window)
             } else {
-                1
+                0
             };
         }
 
@@ -644,7 +644,7 @@ impl<D: MerkleDB> ChainState<D> {
             return;
         }
 
-        self.min_height = current_height - self.ver_window + 1;
+        self.min_height = current_height - self.ver_window;
         //Get batch for state at H = current_height - ver_window
         let mut batch = self.build_state(
             current_height - self.ver_window,
