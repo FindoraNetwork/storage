@@ -153,7 +153,6 @@ impl<D: MerkleDB> State<D> {
     }
 
     /// Iterates the ChainState for the given range of keys
-    /// FixMe: handle height_cap properly
     pub fn iterate(
         &self,
         lower: &[u8],
@@ -161,9 +160,6 @@ impl<D: MerkleDB> State<D> {
         order: IterOrder,
         func: &mut dyn FnMut(KValue) -> bool,
     ) -> bool {
-        if self.height_cap.is_some() {
-            unreachable!()
-        }
         let cs = self.chain_state.read();
         cs.iterate(lower, upper, order, func)
     }
