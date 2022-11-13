@@ -7,19 +7,19 @@ fn test_current_window() {
     let fdb = TempFinDB::new().expect("failed to create temp findb");
     let mut chain = ChainState::new(fdb, "test".to_string(), ver_window);
 
-    assert!(chain.current_window().map(|t| t == (1, 0)).is_ok());
+    assert!(chain.current_window().map(|t| t == (0, 0)).unwrap());
 
     assert!(chain.commit(vec![], 1, true).is_ok());
     assert!(chain.commit(vec![], 2, true).is_ok());
 
-    assert!(chain.current_window().map(|t| t == (1, 2)).is_ok());
+    assert!(chain.current_window().map(|t| t == (0, 2)).unwrap());
     assert!(chain.commit(vec![], 3, true).is_ok());
-    assert!(chain.current_window().map(|t| t == (1, 3)).is_ok());
+    assert!(chain.current_window().map(|t| t == (1, 3)).unwrap());
     assert!(chain.commit(vec![], 4, true).is_ok());
-    assert!(chain.current_window().map(|t| t == (2, 4)).is_ok());
+    assert!(chain.current_window().map(|t| t == (2, 4)).unwrap());
 
     assert!(chain.commit(vec![], 5, true).is_ok());
-    assert!(chain.current_window().map(|t| t == (3, 5)).is_ok());
+    assert!(chain.current_window().map(|t| t == (3, 5)).unwrap());
 }
 
 #[test]
