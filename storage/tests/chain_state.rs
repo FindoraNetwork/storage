@@ -14,8 +14,10 @@ fn test_current_window() {
 
     assert!(chain.current_window().map(|t| t == (0, 2)).unwrap());
     assert!(chain.commit(vec![], 3, true).is_ok());
-    assert!(chain.current_window().map(|t| t == (1, 3)).unwrap());
+    // current > ver_window + 1 => 3 == 2 + 1
+    assert!(chain.current_window().map(|t| t == (0, 3)).unwrap());
     assert!(chain.commit(vec![], 4, true).is_ok());
+    // current > ver_window + 1 => 4 > 2 + 1
     assert!(chain.current_window().map(|t| t == (2, 4)).unwrap());
 
     assert!(chain.commit(vec![], 5, true).is_ok());

@@ -9,8 +9,7 @@ use crate::{
     store::Prefix,
 };
 use ruc::*;
-use std::collections::BTreeMap;
-use std::{ops::Range, path::Path, str};
+use std::{cmp::Ordering, collections::BTreeMap, ops::Range, path::Path, str};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
@@ -286,14 +285,16 @@ impl<D: MerkleDB> ChainState<D> {
             // Prune Aux data in the db
             let upper = self.pinned_height.keys().min().map_or(height, |min| *min);
             let last_upper = self.min_height.saturating_add(self.ver_window);
+            // the versioned keys before H = upper - ver_window - 1 are moved to base, H is included
             for h in last_upper..=upper {
                 self.prune_aux_batch(h, &mut aux_batch)?;
             }
 
             // update the left side of version window
-            self.min_height = if upper > self.ver_window {
+            self.min_height = if upper > self.ver_window + 1 {
                 upper.saturating_sub(self.ver_window)
             } else {
+                // we only build base if height > ver_window + 1
                 0
             };
         }
@@ -463,11 +464,26 @@ impl<D: MerkleDB> ChainState<D> {
     /// - Option-1: Considering renaming as `build_state_delta()` in future
     /// - Option-2: Considering add a flag `delta_or_full` parameter in future
     pub fn build_state(&self, height: u64, prefix: Option<Prefix>) -> KVBatch {
+        self.build_state_to(None, height, prefix, false)
+    }
+
+    // height range is [s, e]
+    // build versioned keys between [s,e] and save them under `prefix`
+    fn build_state_to(
+        &self,
+        s: Option<u64>,
+        e: u64,
+        prefix: Option<Prefix>,
+        keep_tombstone: bool,
+    ) -> KVBatch {
         //New map to store KV pairs
         let mut map = KVMap::new();
 
         let lower = Prefix::new("VER".as_bytes());
-        let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+        if let Some(start) = s {
+            lower.push(Self::height_str(start).as_bytes());
+        }
+        let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(e + 1).as_bytes());
 
         self.iterate_aux(
             lower.begin().as_ref(),
@@ -479,25 +495,46 @@ impl<D: MerkleDB> ChainState<D> {
                     return false;
                 }
                 //If value was deleted in the version history, delete it in the map
-                if v.eq(&TOMBSTONE) {
+                if !keep_tombstone && v.eq(&TOMBSTONE) {
                     map.remove(raw_key.as_bytes());
                 } else {
                     //update map with current KV
-                    map.insert(raw_key.as_bytes().to_vec(), Some(v));
+                    if let Some(prefix) = &prefix {
+                        map.insert(prefix.push(raw_key.as_bytes()).as_ref().to_vec(), Some(v));
+                    } else {
+                        map.insert(raw_key.as_bytes().to_vec(), Some(v));
+                    }
                 }
                 false
             },
         );
 
-        if let Some(prefix) = prefix {
-            let kvs: Vec<_> = map
-                .into_iter()
-                .map(|(k, v)| (prefix.push(&k).as_ref().to_vec(), v))
-                .collect();
-            kvs
-        } else {
-            map.into_iter().collect::<Vec<_>>()
-        }
+        map.into_iter().collect::<Vec<_>>()
+    }
+
+    // Remove versioned keys before `height(included)`
+    // Need a `commit` to actually remove these keys from persistent storage
+    fn remove_versioned_keys_before(&self, height: u64) -> KVBatch {
+        //Define upper and lower bounds for iteration
+        let lower = Prefix::new("VER".as_bytes());
+        let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+
+        //Create an empty batch
+        let mut batch = KVBatch::new();
+
+        //Iterate aux data and delete keys within bounds
+        self.iterate_aux(
+            lower.begin().as_ref(),
+            upper.as_ref(),
+            IterOrder::Asc,
+            &mut |(k, _v)| -> bool {
+                //Delete the key from aux db
+                batch.push((k, None));
+                false
+            },
+        );
+
+        batch
     }
 
     /// Get the value of a key at a given height
@@ -527,10 +564,20 @@ impl<D: MerkleDB> ChainState<D> {
             lower_bound = self.min_height
         }
 
-        // The keys at querying height are moved to base and override by later height
-        // So we cannot determine version info of the querying key
-        if lower_bound > height.saturating_add(1) {
-            return Err(eg!("height too old, no versioning info"));
+        match lower_bound.cmp(&height.saturating_add(1)) {
+            Ordering::Greater => {
+                // The keys at querying height are moved to base and override by later height
+                // We cannot determine version info of the querying key
+                return Err(eg!("height too old, no versioning info"));
+            }
+            Ordering::Equal => {
+                // Search it in baseline if the querying height is moved to base but not override
+                let key = Self::base_key(key);
+                return self.get_aux(&key).c(d!("error reading aux value"));
+            }
+            _ => {
+                // Perform another search in versioned keys
+            }
         }
 
         // Iterate in descending order from upper bound until a value is found
@@ -565,13 +612,9 @@ impl<D: MerkleDB> ChainState<D> {
             return val;
         }
 
-        // Search it in baseline if never versioned
+        // Search it in baseline
         let key = Self::base_key(key);
-        if let Some(val) = self.get_aux(&key).c(d!("error reading aux value"))? {
-            Ok(Some(val))
-        } else {
-            Ok(None)
-        }
+        self.get_aux(&key).c(d!("error reading aux value"))
     }
 
     /// Get the value of a key at a given height
@@ -636,20 +679,14 @@ impl<D: MerkleDB> ChainState<D> {
         assert!(self.pinned_height.is_empty());
 
         //Get current height
-        let current_height = self.height().unwrap_or(0);
-        if current_height == 0 {
-            return;
-        }
-        if current_height < self.ver_window + 1 {
+        let current_height = self.height().expect("failed to get chain height");
+        if current_height == 0 || current_height < self.ver_window + 1 {
             return;
         }
 
         self.min_height = current_height - self.ver_window;
-        //Get batch for state at H = current_height - ver_window
-        let mut batch = self.build_state(
-            current_height - self.ver_window,
-            Some(Self::base_key_prefix()),
-        );
+        //Get batch for state at H = current_height - ver_window - 1
+        let mut batch = self.build_state(self.min_height - 1, Some(Self::base_key_prefix()));
         // Update aux version if needed
         if self.version != CUR_AUX_VERSION {
             batch.push((
@@ -665,25 +702,8 @@ impl<D: MerkleDB> ChainState<D> {
         // Read back to make sure previous commit works well and update in-memory field
         self.version = self.get_aux_version().expect("cannot read back version");
 
-        //Define upper and lower bounds for iteration
-        let lower = Prefix::new("VER".as_bytes());
-        let upper = Prefix::new("VER".as_bytes())
-            .push(Self::height_str(current_height - self.ver_window).as_bytes());
-
-        //Create an empty batch
-        let mut batch = KVBatch::new();
-
-        //Iterate aux data and delete keys within bounds
-        self.iterate_aux(
-            lower.begin().as_ref(),
-            upper.as_ref(),
-            IterOrder::Asc,
-            &mut |(k, _v)| -> bool {
-                //Delete the key from aux db
-                batch.push((k, None));
-                false
-            },
-        );
+        // Remove the versioned keys before H = current_height - self.ver_window - 1, H is included.
+        let batch = self.remove_versioned_keys_before(self.min_height - 1);
 
         //commit aux batch
         let _ = self.db.commit(batch, true);
