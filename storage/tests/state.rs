@@ -9,7 +9,7 @@ use std::{sync::Arc, thread};
 use storage::state::chain_state::ChainStateOpts;
 use storage::{
     db::{IterOrder, KVBatch, KValue, MerkleDB},
-    state::{ChainState, State},
+    state::{ChainState, ChainStateOpts, State},
     store::Prefix,
 };
 use temp_db::{TempFinDB, TempRocksDB};
