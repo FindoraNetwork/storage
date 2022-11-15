@@ -6,7 +6,7 @@ pub mod chain_state;
 
 use crate::db::{IterOrder, KValue, MerkleDB};
 pub use cache::{KVMap, KVecMap, SessionedCache};
-pub use chain_state::ChainState;
+pub use chain_state::{ChainState, ChainStateOpts};
 use parking_lot::RwLock;
 use ruc::*;
 use std::sync::Arc;
