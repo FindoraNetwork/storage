@@ -12,8 +12,11 @@ use ruc::*;
 use std::{cmp::Ordering, collections::BTreeMap, ops::Range, path::Path, str};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
+const BASE_HEIGHT_KEY: &[u8; 10] = b"BaseHeight";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
-const CUR_AUX_VERSION: u64 = 0x01;
+const AUX_VERSION_00: u64 = 0x00;
+const AUX_VERSION_01: u64 = 0x01;
+const AUX_VERSION_02: u64 = 0x02;
 const SPLIT_BGN: &str = "_";
 const TOMBSTONE: [u8; 1] = [206u8];
 
@@ -76,12 +79,48 @@ impl<D: MerkleDB> ChainState<D> {
             db,
         };
 
-        cs.version = cs.get_aux_version().expect("Need a valid version");
+        let mut base_height;
+
+        match cs.get_aux_version().expect("Need a valid version") {
+            None => {
+                // initializing
+                base_height = None;
+                // version will be updated in `commit_db_with_meta`
+                cs.version = AUX_VERSION_00;
+            }
+            Some(AUX_VERSION_01) => {
+                // Version_01
+                // 1. versioned keys are seperated into two sections: `base` and `VER`
+
+                let h = cs.height().expect("Failed to get height");
+                base_height = match h.cmp(&opts.ver_window.saturating_add(1)) {
+                    Ordering::Greater => Some(h.saturating_sub(opts.ver_window)),
+                    _ => None,
+                };
+                // version will be updated in `commit_db_with_meta`
+                cs.version = AUX_VERSION_01;
+            }
+            Some(AUX_VERSION_02) => {
+                // Version_02
+                // 1. `base_height` is persistent in aux db
+                // 2. add snapshots for speedup get_ver
+                base_height = cs
+                    .base_height()
+                    .expect("Failed to read base_height from aux db");
+                cs.version = AUX_VERSION_02;
+            }
+            Some(_) => {
+                panic!("Invalid db version");
+            }
+        }
 
         if opts.cleanup_aux {
             cs.clean_aux().unwrap();
         } else {
-            cs.clean_aux_db();
+            let mut batch = KVBatch::new();
+            cs.clean_aux_db(&mut base_height, &mut batch);
+            //cs.build_snapshots(&base_height, &prev_interval, &mut batch);
+            cs.commit_db_with_meta(batch);
         }
 
         cs
@@ -126,6 +165,12 @@ impl<D: MerkleDB> ChainState<D> {
         self.db.get(key)
     }
 
+    // ver_window == 0 -> ver_window = 100
+    // current height = 10000, cf internal
+    // [0,10000] -> base prefix saved to aux
+
+    // [9900, 10000] versioned, [0,9899] -> base prefix saved to aux
+
     /// Gets a value for the given key from the auxiliary data section in RocksDB.
     ///
     /// This section of data is not used for root hash calculations.
@@ -136,15 +181,16 @@ impl<D: MerkleDB> ChainState<D> {
     /// Get aux database version
     ///
     /// The default version is ox00
-    fn get_aux_version(&self) -> Result<u64> {
+    fn get_aux_version(&self) -> Result<Option<u64>> {
         if let Some(version) = self.get_aux(AUX_VERSION.to_vec().as_ref())? {
             let ver_str = String::from_utf8(version).c(d!("Invalid aux version string"))?;
-            return ver_str
+            let ver = ver_str
                 .parse::<u64>()
-                .c(d!("aux version should be a valid 64-bit long integer"));
+                .c(d!("aux version should be a valid 64-bit long integer"))?;
+            Ok(Some(ver))
+        } else {
+            Ok(None)
         }
-
-        Ok(0x00)
     }
 
     /// Iterates MerkleDB for a given range of keys.
@@ -292,7 +338,13 @@ impl<D: MerkleDB> ChainState<D> {
 
             // update the left side of version window
             self.min_height = if upper > self.ver_window + 1 {
-                upper.saturating_sub(self.ver_window)
+                let h = upper.saturating_sub(self.ver_window);
+                // Store the base height in auxiliary batch
+                aux_batch.push((
+                    BASE_HEIGHT_KEY.to_vec(),
+                    Some((h - 1).to_string().into_bytes()),
+                ));
+                h
             } else {
                 // we only build base if height > ver_window + 1
                 0
@@ -414,6 +466,19 @@ impl<D: MerkleDB> ChainState<D> {
             return Ok(last_height);
         }
         Ok(0u64)
+    }
+
+    // Get max height of keys stored in `base`
+    fn base_height(&self) -> Result<Option<u64>> {
+        let height = self.db.get_aux(BASE_HEIGHT_KEY).c(d!())?;
+        if let Some(value) = height {
+            let height_str = String::from_utf8(value).c(d!())?;
+            let height = height_str.parse::<u64>().c(d!())?;
+
+            Ok(Some(height))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Build a prefix for a versioned key
@@ -672,41 +737,65 @@ impl<D: MerkleDB> ChainState<D> {
         }
     }
 
+    // simple commit to db
+    fn commit_db_with_meta(&mut self, mut batch: KVBatch) {
+        // Update aux version if needed
+        if self.version != AUX_VERSION_02 {
+            batch.push((
+                AUX_VERSION.to_vec(),
+                Some(AUX_VERSION_02.to_string().into_bytes()),
+            ));
+        }
+
+        //Commit this batch to db
+        if self.db.commit(batch, true).is_err() {
+            println!("error building base chain state");
+            return;
+        }
+
+        // Read back to make sure previous commit works well and update in-memory field
+        self.version = self
+            .get_aux_version()
+            .expect("cannot read back version")
+            .expect("Need a valid version");
+    }
+
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
-    fn clean_aux_db(&mut self) {
+    fn clean_aux_db(&mut self, base_height: &mut Option<u64>, batch: &mut KVBatch) {
         // A ChainState with pinned height, should never call this function
         assert!(self.pinned_height.is_empty());
 
         //Get current height
         let current_height = self.height().expect("failed to get chain height");
-        if current_height == 0 || current_height < self.ver_window + 1 {
+        if current_height == 0 {
+            assert!(base_height.is_none());
+            return;
+        }
+        if current_height < self.ver_window + 1 {
+            // ver_window is increased, just update the min_height
+            if let Some(h) = base_height {
+                self.min_height = h.saturating_add(1);
+            }
             return;
         }
 
         self.min_height = current_height - self.ver_window;
-        //Get batch for state at H = current_height - ver_window - 1
-        let mut batch = self.build_state(self.min_height - 1, Some(Self::base_key_prefix()));
-        // Update aux version if needed
-        if self.version != CUR_AUX_VERSION {
-            batch.push((
-                AUX_VERSION.to_vec(),
-                Some(CUR_AUX_VERSION.to_string().into_bytes()),
-            ));
-        }
-        //Commit this batch at base height H
-        if self.db.commit(batch, true).is_err() {
-            println!("error building base chain state");
-            return;
-        }
-        // Read back to make sure previous commit works well and update in-memory field
-        self.version = self.get_aux_version().expect("cannot read back version");
+        //Get batch for state at H = current_height - ver_window - 1, H is included
+        let mut base_batch = self.build_state(self.min_height - 1, Some(Self::base_key_prefix()));
+
+        batch.append(&mut base_batch);
+        // Store the base height in auxiliary batch
+        batch.push((
+            BASE_HEIGHT_KEY.to_vec(),
+            Some((self.min_height - 1).to_string().into_bytes()),
+        ));
+        *base_height = Some(self.min_height.saturating_sub(1));
 
         // Remove the versioned keys before H = current_height - self.ver_window - 1, H is included.
-        let batch = self.remove_versioned_keys_before(self.min_height - 1);
+        let mut removed_keys = self.remove_versioned_keys_before(self.min_height - 1);
 
-        //commit aux batch
-        let _ = self.db.commit(batch, true);
+        batch.append(&mut removed_keys);
     }
 
     /// Gets current versioning range of the chain-state
