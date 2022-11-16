@@ -783,14 +783,20 @@ impl<D: MerkleDB> ChainState<D> {
         self.min_height = current_height - self.ver_window;
         //Get batch for state at H = current_height - ver_window - 1, H is included
         let mut base_batch = self.build_state(self.min_height - 1, Some(Self::base_key_prefix()));
-
+        let current_base = match base_height {
+            Some(h) if *h >= self.min_height => {
+                assert!(base_batch.is_empty());
+                *h
+            }
+            _ => self.min_height.saturating_sub(1),
+        };
         batch.append(&mut base_batch);
         // Store the base height in auxiliary batch
         batch.push((
             BASE_HEIGHT_KEY.to_vec(),
-            Some((self.min_height - 1).to_string().into_bytes()),
+            Some(current_base.to_string().into_bytes()),
         ));
-        *base_height = Some(self.min_height.saturating_sub(1));
+        *base_height = Some(current_base);
 
         // Remove the versioned keys before H = current_height - self.ver_window - 1, H is included.
         let mut removed_keys = self.remove_versioned_keys_before(self.min_height - 1);
