@@ -13,6 +13,7 @@ use std::{cmp::Ordering, collections::BTreeMap, ops::Range, path::Path, str};
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const BASE_HEIGHT_KEY: &[u8; 10] = b"BaseHeight";
+const SNAPSHOT_KEY: &[u8; 8] = b"Snapshot";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
 const AUX_VERSION_00: u64 = 0x00;
 const AUX_VERSION_01: u64 = 0x01;
@@ -31,6 +32,7 @@ pub const NULL_HASH: [u8; HASH_LENGTH] = [0; HASH_LENGTH];
 pub struct ChainState<D: MerkleDB> {
     _name: String,
     ver_window: u64,
+    interval: u64,
     // the min height of the versioned keys
     min_height: u64,
     pinned_height: BTreeMap<u64, u64>,
@@ -43,7 +45,7 @@ pub struct ChainState<D: MerkleDB> {
 pub struct ChainStateOpts {
     pub name: Option<String>,
     pub ver_window: u64,
-    pub _snapshot_interval: u64,
+    pub interval: u64,
     pub cleanup_aux: bool,
 }
 
@@ -70,21 +72,35 @@ impl<D: MerkleDB> ChainState<D> {
     pub fn create_with_opts(db: D, opts: ChainStateOpts) -> Self {
         let db_name = opts.name.unwrap_or_else(|| String::from("chain-state"));
 
+        if opts.interval == 1 {
+            panic!("snapshot interval cannot be One")
+        }
+
+        if opts.ver_window < opts.interval {
+            panic!("version window is smaller than snapshot interval");
+        }
+        // ver_window is larger than snapshot_interval
+        // ver_window should align at snapshot_interval
+        if opts.interval != 0 && opts.ver_window % opts.interval != 0 {
+            panic!("ver_window should align at snapshot interval");
+        }
+
         let mut cs = ChainState {
             _name: db_name,
             ver_window: opts.ver_window,
+            interval: opts.interval,
             min_height: 0,
             pinned_height: Default::default(),
             version: Default::default(),
             db,
         };
 
-        let mut base_height;
+        let mut base_height = None;
+        let mut prev_interval = 0;
 
         match cs.get_aux_version().expect("Need a valid version") {
             None => {
                 // initializing
-                base_height = None;
                 // version will be updated in `commit_db_with_meta`
                 cs.version = AUX_VERSION_00;
             }
@@ -107,6 +123,11 @@ impl<D: MerkleDB> ChainState<D> {
                 base_height = cs
                     .base_height()
                     .expect("Failed to read base_height from aux db");
+                prev_interval = cs
+                    .snapshot_meta()
+                    .expect("Failed to read snapshot meta from aux db")
+                    .expect("missing snapshot meta");
+
                 cs.version = AUX_VERSION_02;
             }
             Some(_) => {
@@ -119,7 +140,7 @@ impl<D: MerkleDB> ChainState<D> {
         } else {
             let mut batch = KVBatch::new();
             cs.clean_aux_db(&mut base_height, &mut batch);
-            //cs.build_snapshots(&base_height, &prev_interval, &mut batch);
+            cs.build_snapshots(base_height, prev_interval, opts.interval, &mut batch);
             cs.commit_db_with_meta(batch);
         }
 
@@ -481,6 +502,19 @@ impl<D: MerkleDB> ChainState<D> {
         }
     }
 
+    // Get the snapshot metadata
+    fn snapshot_meta(&self) -> Result<Option<u64>> {
+        let raw = self.db.get_aux(SNAPSHOT_KEY).c(d!())?;
+        if let Some(value) = raw {
+            let meta_str = String::from_utf8(value).c(d!())?;
+            let meta = meta_str.parse::<u64>().c(d!())?;
+
+            Ok(Some(meta))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Build a prefix for a versioned key
     pub fn versioned_key_prefix(height: u64) -> Prefix {
         Prefix::new("VER".as_bytes()).push(Self::height_str(height).as_bytes())
@@ -497,6 +531,11 @@ impl<D: MerkleDB> ChainState<D> {
     /// Build a height string for versioning history
     fn height_str(height: u64) -> String {
         format!("{:020}", height)
+    }
+
+    /// Build a prefix for a snapshot key
+    pub(crate) fn snapshot_key_prefix(height: u64) -> Prefix {
+        Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height).as_bytes())
     }
 
     /// Build a prefix for a base key
@@ -760,6 +799,33 @@ impl<D: MerkleDB> ChainState<D> {
             .expect("Need a valid version");
     }
 
+    fn build_snapshots(
+        &mut self,
+        base_height: Option<u64>,
+        prev_interval: u64,
+        interval: u64,
+        batch: &mut KVBatch,
+    ) {
+        let height = self.height().expect("Failed to read chain height");
+
+        batch.push((
+            SNAPSHOT_KEY.to_vec(),
+            Some(interval.to_string().into_bytes()),
+        ));
+
+        if prev_interval != interval {
+            if prev_interval != 0 {
+                //remove snapshots
+            }
+
+            if interval != 0 {
+                //create snapshots
+            }
+        } else if prev_interval != 0 {
+            // loading snapshots
+        }
+    }
+
     /// When creating a new chain-state instance, any residual aux data outside the current window
     /// needs to be cleared as to not waste memory or disrupt the versioning behaviour.
     fn clean_aux_db(&mut self, base_height: &mut Option<u64>, batch: &mut KVBatch) {
@@ -834,5 +900,11 @@ impl<D: MerkleDB> ChainState<D> {
         let current = self.height()?;
 
         Ok((self.min_height, current))
+    }
+
+    // create an new snapshot at height `end` including versioned keys in height range [start, end]
+    // snapshot prefix "SNAPSHOT-{end}"
+    fn create_snapshot(&self, start: u64, end: u64) -> KVBatch {
+        self.build_state_to(Some(start), end, Some(Self::snapshot_key_prefix(end)), true)
     }
 }
