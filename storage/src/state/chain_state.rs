@@ -357,6 +357,7 @@ impl<D: MerkleDB> ChainState<D> {
                 self.prune_aux_batch(h, &mut aux_batch)?;
             }
 
+            let last_min_height = self.min_height;
             // update the left side of version window
             self.min_height = if upper > self.ver_window + 1 {
                 let h = upper.saturating_sub(self.ver_window);
@@ -370,6 +371,8 @@ impl<D: MerkleDB> ChainState<D> {
                 // we only build base if height > ver_window + 1
                 0
             };
+
+            self.build_snapshots_at_height(height, last_min_height, &mut aux_batch);
         }
 
         // Store the current height in auxiliary batch
@@ -797,6 +800,41 @@ impl<D: MerkleDB> ChainState<D> {
             .get_aux_version()
             .expect("cannot read back version")
             .expect("Need a valid version");
+    }
+
+    fn build_snapshots_at_height(
+        &self,
+        height: u64,
+        last_min_height: u64,
+        aux_batch: &mut KVBatch,
+    ) {
+        if self.interval < 2 {
+            // snapshot is disabled when interval == 0
+            // snapshot interval can not be One
+            return;
+        }
+
+        // Versioned keys before height `min_height` have been pruned and moved to `base`,
+        // if there is a snapshot at height `min_height-1`, it should be removed too.
+        // This could be multiple removals if `unpin` operations occurred.
+        for snapshot_at in last_min_height..self.min_height {
+            if snapshot_at > 0 && snapshot_at % self.interval == 0 {
+                let mut batch = self.remove_snapshot(snapshot_at);
+                aux_batch.append(&mut batch);
+            }
+        }
+
+        // create last snapshot if necessary
+        if height > 1 && height.saturating_sub(1) % self.interval == 0 {
+            let e = height.saturating_sub(1);
+            let s = if e == self.interval {
+                0
+            } else {
+                e - self.interval + 1
+            };
+            let mut batch = self.create_snapshot(s, e);
+            aux_batch.append(&mut batch);
+        }
     }
 
     fn build_snapshots(
