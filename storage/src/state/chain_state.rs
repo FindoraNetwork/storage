@@ -813,16 +813,39 @@ impl<D: MerkleDB> ChainState<D> {
             Some(interval.to_string().into_bytes()),
         ));
 
-        if prev_interval != interval {
-            if prev_interval != 0 {
-                //remove snapshots
+        if prev_interval != 0 && prev_interval != interval {
+            // remove all previous snapshots
+            let mut snapshot_at = prev_interval;
+            while snapshot_at <= height {
+                let mut snapshot = self.remove_snapshot(snapshot_at);
+                snapshot_at = snapshot_at.saturating_add(prev_interval);
+                if !batch.is_empty() {
+                    batch.append(&mut snapshot);
+                }
             }
+        }
 
-            if interval != 0 {
-                //create snapshots
+        if interval != 0 {
+            //create snapshots
+            let mut s = base_height.map(|v| v.saturating_add(1)).unwrap_or_default();
+            let mut e = if s != 0 && s % interval == 0 {
+                s
+            } else {
+                (s / interval + 1) * interval
+            };
+
+            while e <= height {
+                // create snapshot
+                if prev_interval != interval {
+                    let mut snapshot = self.create_snapshot(s, e);
+                    batch.append(&mut snapshot);
+                } else {
+                    // reconstruct snapshot info
+                    let _ = self.count_in_snapshot(e);
+                }
+                s = e;
+                e = e.saturating_add(interval);
             }
-        } else if prev_interval != 0 {
-            // loading snapshots
         }
     }
 
@@ -906,5 +929,55 @@ impl<D: MerkleDB> ChainState<D> {
     // snapshot prefix "SNAPSHOT-{end}"
     fn create_snapshot(&self, start: u64, end: u64) -> KVBatch {
         self.build_state_to(Some(start), end, Some(Self::snapshot_key_prefix(end)), true)
+    }
+
+    fn remove_snapshot(&self, height: u64) -> KVBatch {
+        let mut map = KVMap::new();
+
+        let lower = Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height).as_bytes());
+        let upper =
+            Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+
+        self.iterate_aux(
+            lower.as_ref(),
+            upper.as_ref(),
+            IterOrder::Asc,
+            &mut |(k, _)| -> bool {
+                // Only remove versioned kv pairs
+                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                if raw_key.is_empty() {
+                    return false;
+                }
+                // Mark this key to be deleted
+                map.insert(k, None);
+                false
+            },
+        );
+
+        map.into_iter().collect::<Vec<_>>()
+    }
+
+    fn count_in_snapshot(&self, height: u64) -> u64 {
+        let lower = Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height).as_bytes());
+        let upper =
+            Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+
+        let mut count = 0u64;
+
+        self.iterate_aux(
+            lower.as_ref(),
+            upper.as_ref(),
+            IterOrder::Asc,
+            &mut |(k, _v)| -> bool {
+                let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
+                if raw_key.is_empty() {
+                    return false;
+                }
+                count = count.saturating_add(1);
+                false
+            },
+        );
+
+        count
     }
 }
