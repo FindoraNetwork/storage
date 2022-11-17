@@ -3,7 +3,6 @@ use mem_db::MemoryDB;
 use parking_lot::RwLock;
 use rand::Rng;
 use std::{sync::Arc, thread};
-use storage::state::chain_state::ChainStateOpts;
 use storage::{
     db::{IterOrder, KVBatch, KValue, MerkleDB},
     state::{ChainState, ChainStateOpts, State},
@@ -31,7 +30,7 @@ fn gen_cs_rocks_fresh(path: String) -> ChainState<TempRocksDB> {
     let opts = ChainStateOpts {
         name: Some("test_db".to_string()),
         ver_window: 0,
-        _snapshot_interval: 0,
+        interval: 0,
         cleanup_aux: true,
     };
     ChainState::create_with_opts(fdb, opts)

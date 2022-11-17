@@ -374,18 +374,21 @@ impl<D: MerkleDB> ChainState<D> {
 
             let last_min_height = self.min_height;
             // update the left side of version window
-            self.min_height = if upper > self.ver_window + 1 {
-                let h = upper.saturating_sub(self.ver_window);
+            self.min_height = if upper > self.ver_window {
+                upper.saturating_sub(self.ver_window)
+            } else {
+                // we only build base if height > ver_window
+                0
+            };
+            if last_min_height > self.min_height {
+                self.min_height = last_min_height;
+            } else if self.min_height > 0 {
                 // Store the base height in auxiliary batch
                 aux_batch.push((
                     BASE_HEIGHT_KEY.to_vec(),
-                    Some((h - 1).to_string().into_bytes()),
+                    Some((self.min_height - 1).to_string().into_bytes()),
                 ));
-                h
-            } else {
-                // we only build base if height > ver_window + 1
-                0
-            };
+            }
 
             self.build_snapshots_at_height(height, last_min_height, &mut aux_batch);
         }
@@ -665,7 +668,18 @@ impl<D: MerkleDB> ChainState<D> {
     /// Returns None if the key was deleted or invalid at height H
     #[cfg(feature = "optimize_get_ver")]
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        if self.ver_window == 0 {
+            return Err(eg!("non-versioned chain"));
+        }
+
+        let cur_height = self.height().c(d!("error reading current height"))?;
+
         if self.interval != 0 {
+            let height = if cur_height <= height {
+                cur_height
+            } else {
+                height
+            };
             return self.find_versioned_key_with_snapshots(key, height);
         }
         //Make sure that this key exists to avoid expensive query
@@ -677,7 +691,6 @@ impl<D: MerkleDB> ChainState<D> {
         //Need to set lower and upper bound as the height can get very large
         let mut lower_bound = 1;
         let upper_bound = height;
-        let cur_height = self.height().c(d!("error reading current height"))?;
         if height >= cur_height {
             return Ok(val);
         }
@@ -839,7 +852,7 @@ impl<D: MerkleDB> ChainState<D> {
             if snapshot_at > 0 && snapshot_at % self.interval == 0 {
                 let mut batch = self.remove_snapshot(snapshot_at);
                 aux_batch.append(&mut batch);
-                if let Some(last) = self.snapshot_info.pop_back() {
+                if let Some(last) = self.snapshot_info.pop_front() {
                     assert_eq!(last.end, snapshot_at);
                 } else {
                     unreachable!()
@@ -912,14 +925,13 @@ impl<D: MerkleDB> ChainState<D> {
                     // reconstruct snapshot info
                     self.count_in_snapshot(e)
                 };
-                s = e;
-                e = e.saturating_add(interval);
-                let info = SnapShotInfo {
+                self.snapshot_info.push_back(SnapShotInfo {
                     start: s,
                     end: e,
                     count,
-                };
-                self.snapshot_info.push_back(info);
+                });
+                s = e;
+                e = e.saturating_add(interval);
             }
         }
     }
@@ -950,6 +962,7 @@ impl<D: MerkleDB> ChainState<D> {
         let current_base = match base_height {
             Some(h) if *h >= self.min_height => {
                 assert!(base_batch.is_empty());
+                self.min_height = h.saturating_add(1);
                 *h
             }
             _ => self.min_height.saturating_sub(1),
@@ -973,9 +986,14 @@ impl<D: MerkleDB> ChainState<D> {
     /// returns a range of the current versioning window [lower, upper)
     pub fn get_ver_range(&self) -> Result<Range<u64>> {
         let upper = self.height().c(d!("error reading current height"))?;
-        let mut lower = 1;
+        let mut lower = 0;
         if upper > self.ver_window {
             lower = upper.saturating_sub(self.ver_window);
+        }
+        if let Some(&pinned) = self.pinned_height.keys().min() {
+            if pinned < lower {
+                lower = pinned;
+            }
         }
         Ok(lower..upper)
     }
@@ -1078,6 +1096,7 @@ impl<D: MerkleDB> ChainState<D> {
     }
 
     fn last_snapshot(&self, height: u64) -> Option<usize> {
+        let mut last = None;
         for (i, ss) in self.snapshot_info.iter().enumerate() {
             if ss.start > height {
                 assert_eq!(i, 0);
@@ -1085,6 +1104,7 @@ impl<D: MerkleDB> ChainState<D> {
             } else if ss.end == height {
                 return Some(i);
             } else if ss.end < height {
+                last = Some(i);
                 continue;
             } else {
                 assert!(ss.start <= height && ss.end > height);
@@ -1095,7 +1115,41 @@ impl<D: MerkleDB> ChainState<D> {
                 };
             }
         }
-        None
+        last
+    }
+
+    /// Get snapshot info
+    pub fn get_snapshots_info(&self) -> Vec<SnapShotInfo> {
+        self.snapshot_info.iter().cloned().collect()
+    }
+
+    /// The height of last snapshot before `height(included)`
+    pub fn last_snapshot_before(&self, height: u64) -> Option<u64> {
+        let interval = self.interval;
+        if interval >= 2 {
+            Some(if height % interval == 0 {
+                height
+            } else {
+                height / interval * interval
+            })
+        } else {
+            None
+        }
+    }
+
+    /// The height of oldest snapshot
+    pub fn oldest_snapshot(&self) -> Option<u64> {
+        let interval = self.interval;
+        let min_height = self.get_ver_range().ok()?.start;
+        if interval >= 2 {
+            Some(if min_height % interval == 0 {
+                min_height
+            } else {
+                (min_height / interval + 1) * interval
+            })
+        } else {
+            None
+        }
     }
 
     fn find_versioned_key_with_snapshots(
@@ -1124,6 +1178,7 @@ impl<D: MerkleDB> ChainState<D> {
                 .ok_or(eg!("cannot find snapshot information!"))?;
             ss.end
         } else {
+            // the query height is less than all of the snapshots
             self.min_height
         };
 
