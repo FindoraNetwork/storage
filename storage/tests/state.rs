@@ -1,7 +1,4 @@
-#[cfg(test)]
-mod chain_state;
-
-use fin_db::{FinDB, RocksDB};
+use fin_db::FinDB;
 use mem_db::MemoryDB;
 use parking_lot::RwLock;
 use rand::Rng;
@@ -581,25 +578,25 @@ fn test_clean_aux() {
     tfdb.clean_aux().unwrap();
     assert_eq!(tfdb.get_aux(b"k11").unwrap(), None);
 
-    // test RocksDB
-    let mut rocks_path = path_base.clone();
-    rocks_path.push_str("rocks");
-    let mut rdb = RocksDB::open(rocks_path).unwrap();
-    rdb.commit(vec![(b"k11".to_vec(), Some(b"v11".to_vec()))], false)
-        .unwrap();
-    assert_eq!(rdb.get_aux(b"k11").unwrap().unwrap(), b"v11".to_vec());
-    rdb.clean_aux().unwrap();
-    assert_eq!(rdb.get_aux(b"k11").unwrap(), None);
+    // // test RocksDB
+    // let mut rocks_path = path_base.clone();
+    // rocks_path.push_str("rocks");
+    // let mut rdb = RocksDB::open(rocks_path).unwrap();
+    // rdb.commit(vec![(b"k11".to_vec(), Some(b"v11".to_vec()))], false)
+    //     .unwrap();
+    // assert_eq!(rdb.get_aux(b"k11").unwrap().unwrap(), b"v11".to_vec());
+    // rdb.clean_aux().unwrap();
+    // assert_eq!(rdb.get_aux(b"k11").unwrap(), None);
 
-    // test TempRocksDB
-    let mut trocks_path = path_base.clone();
-    trocks_path.push_str("trocks");
-    let mut trdb = TempRocksDB::open(trocks_path).expect("failed to open db");
-    trdb.commit(vec![(b"k11".to_vec(), Some(b"v11".to_vec()))], false)
-        .unwrap();
-    assert_eq!(trdb.get_aux(b"k11").unwrap().unwrap(), b"v11".to_vec());
-    trdb.clean_aux().unwrap();
-    assert_eq!(trdb.get_aux(b"k11").unwrap(), None);
+    // // test TempRocksDB
+    // let mut trocks_path = path_base.clone();
+    // trocks_path.push_str("trocks");
+    // let mut trdb = TempRocksDB::open(trocks_path).expect("failed to open db");
+    // trdb.commit(vec![(b"k11".to_vec(), Some(b"v11".to_vec()))], false)
+    //     .unwrap();
+    // assert_eq!(trdb.get_aux(b"k11").unwrap().unwrap(), b"v11".to_vec());
+    // trdb.clean_aux().unwrap();
+    // assert_eq!(trdb.get_aux(b"k11").unwrap(), None);
 
     // test MemoryDB
     let mut mdb = MemoryDB::new();
@@ -628,22 +625,22 @@ fn test_clean_aux() {
     let cs_fin = gen_cs_rocks_fresh(cs_fin_path);
     assert_eq!(cs_fin.get_aux(&b"Height".to_vec()).unwrap(), None);
 
-    // test ChainState on RocksDB
-    let mut cs_rocks_path = path_base.clone();
-    cs_rocks_path.push_str("cs_rocks");
-    let mut cs_rocks = gen_cs_rocks(cs_rocks_path);
-    cs_rocks
-        .commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))], 25, true)
-        .unwrap();
-    assert_eq!(
-        cs_rocks.get_aux(&b"Height".to_vec()).unwrap(),
-        Some(b"25".to_vec())
-    );
-    std::mem::drop(cs_rocks);
-    let mut cs_rocks_path = path_base.clone();
-    cs_rocks_path.push_str("cs_rocks");
-    let cs_rocks = gen_cs_rocks_fresh(cs_rocks_path);
-    assert_eq!(cs_rocks.get_aux(&b"Height".to_vec()).unwrap(), None);
+    // // test ChainState on RocksDB
+    // let mut cs_rocks_path = path_base.clone();
+    // cs_rocks_path.push_str("cs_rocks");
+    // let mut cs_rocks = gen_cs_rocks(cs_rocks_path);
+    // cs_rocks
+    //     .commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))], 25, true)
+    //     .unwrap();
+    // assert_eq!(
+    //     cs_rocks.get_aux(&b"Height".to_vec()).unwrap(),
+    //     Some(b"25".to_vec())
+    // );
+    // std::mem::drop(cs_rocks);
+    // let mut cs_rocks_path = path_base.clone();
+    // cs_rocks_path.push_str("cs_rocks");
+    // let cs_rocks = gen_cs_rocks_fresh(cs_rocks_path);
+    // assert_eq!(cs_rocks.get_aux(&b"Height".to_vec()).unwrap(), None);
 }
 
 #[test]
