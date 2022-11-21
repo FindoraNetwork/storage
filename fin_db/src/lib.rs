@@ -1,5 +1,5 @@
 use fmerk::{
-    rocksdb::{self, IteratorMode},
+    rocksdb::{self},
     tree::Tree,
     BatchEntry, Merk, Op,
 };
@@ -38,7 +38,9 @@ impl FinDB {
 
     /// Closes db and deletes all data from disk.
     pub fn destroy(self) -> Result<()> {
-        self.db.destroy().map_err(|e| eg!("Failed to destory db {}", e))
+        self.db
+            .destroy()
+            .map_err(|e| eg!("Failed to destory db {}", e))
     }
 }
 
@@ -305,16 +307,16 @@ impl MerkleDB for RocksDB {
     }
 
     fn clean_aux(&mut self) -> Result<()> {
-        let state_cf = self.db.cf_handle(CF_STATE).unwrap();
-        let mut batch = rocksdb::WriteBatch::default();
-        for (key, _) in self.db.iterator_cf(state_cf, IteratorMode::Start) {
-            batch.delete_cf(state_cf, key);
-        }
+        // let state_cf = self.db.cf_handle(CF_STATE).unwrap();
+        // let mut batch = rocksdb::WriteBatch::default();
+        // for (key, _) in self.db.iterator_cf(state_cf, IteratorMode::Start) {
+        //     batch.delete_cf(state_cf, key);
+        // }
 
-        let mut opts = rocksdb::WriteOptions::default();
-        opts.set_sync(false);
-        self.db.write_opt(batch, &opts).c(d!())?;
-        self.db.flush_cf(state_cf).c(d!())?;
+        // let mut opts = rocksdb::WriteOptions::default();
+        // opts.set_sync(false);
+        // self.db.write_opt(batch, &opts).c(d!())?;
+        // self.db.flush_cf(state_cf).c(d!())?;
 
         Ok(())
     }
