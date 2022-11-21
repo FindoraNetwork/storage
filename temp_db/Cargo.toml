@@ -5,8 +5,8 @@ authors = ["FindoraNetwork"]
 edition = "2021"
 
 [dependencies]
-ruc = "1.0"
-fmerk = { git = "https://github.com/FindoraNetwork/fmerk.git", branch = "trace_option"}
+ruc = "3.0.0"
+fmerk = { git = "https://github.com/FindoraNetwork/fmerk.git", tag = "v2.1.1"}
 storage = { path = "../storage", version = "0.2" }
 fin_db = { path = "../fin_db", version = "0.2" }
 
