@@ -16,8 +16,6 @@ use std::{
     str,
 };
 
-use fmerk::tree::Tree;
-
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const VER_WINDOW: &[u8; 9] = b"VerWindow";
 const AUX_VERSION: &[u8; 10] = b"AuxVersion";
@@ -985,32 +983,27 @@ impl<D: MerkleDB> ChainState<D> {
         self.get_aux(&key).c(d!("error reading aux value"))
     }
 
-    // hMove all the data before the specified height to base
+    // hMove all the internal data  to base
     pub fn height_internal_to_base(
         &mut self,
         height: u64,
     ) -> Result<()> {
-        let mut map = KVMap::new();
         let mut batch = KVBatch::new();
 
-        let last_base_height = self.base_height().c(d!("error reading last base height"))?;
-        let lower = Prefix::new(b"key-1");
+        //let last_base_height = self.base_height().c(d!("error reading last base height"))?;
+        //let lower = Prefix::new(b"key-1");
        // let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
-        let upper =  Prefix::new(b"key-100");
-        println!("lower:{:?}, upper : {:?}", lower.to_string(), upper.to_string());
-        let bound = Prefix::new("key".as_bytes());
+        //let upper =  Prefix::new(b"key-100");
 
          self.all_iterator(
             IterOrder::Asc,
             &mut |(k, v)| -> bool {
-               // let kv = Tree::decode(k.to_vec(), &v);
                 let base_key = Self::base_key(&k);
-                println!("base_key : {:?}, base_value : {:?}",std::str::from_utf8(&base_key), std::str::from_utf8(&v));
+               // println!("base_key : {:?}, base_value : {:?}",std::str::from_utf8(&base_key), std::str::from_utf8(&v));
                 batch.push((base_key, Some(v)));
                 false
             },
         );
-        //batch.append(&mut map.into_iter().collect::<Vec<_>>());
         batch.push((BASE_HEIGHT_KEY.to_vec(), Some(height.to_string().into_bytes())));
         if self.db.commit(batch, true).is_err() {
             panic!("error move before a certain height chain state");

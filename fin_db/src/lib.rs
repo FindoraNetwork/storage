@@ -99,7 +99,7 @@ impl MerkleDB for FinDB {
     }
     fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>
     {
-        let mut readopts = rocksdb::ReadOptions::default();
+        let readopts = rocksdb::ReadOptions::default();
         match order {
             IterOrder::Asc => Box::new(self.db.iter_opt(rocksdb::IteratorMode::Start, readopts)),
             IterOrder::Desc => Box::new(self.db.iter_opt(rocksdb::IteratorMode::End, readopts)),
@@ -269,7 +269,7 @@ impl MerkleDB for RocksDB {
 
     fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>
     {
-        let mut readopts = rocksdb::ReadOptions::default();
+        let readopts = rocksdb::ReadOptions::default();
         match order {
             IterOrder::Asc => Box::new(self.iter_opt(rocksdb::IteratorMode::Start, readopts)),
             IterOrder::Desc => Box::new(self.iter_opt(rocksdb::IteratorMode::End, readopts)),
