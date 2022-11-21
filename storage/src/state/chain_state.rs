@@ -67,6 +67,7 @@ pub struct ChainStateOpts {
     pub ver_window: u64,
     pub snapshot_interval: u64,
     pub cleanup_aux: bool,
+
 }
 
 /// Implementation of of the concrete ChainState struct
