@@ -61,6 +61,7 @@ pub struct ChainStateOpts {
     pub ver_window: u64,
     pub interval: u64,
     pub cleanup_aux: bool,
+    pub construct_base: bool,
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -109,6 +110,11 @@ impl<D: MerkleDB> ChainState<D> {
             version: Default::default(),
             db,
         };
+
+        if opts.construct_base {
+            // move all keys to base
+            cs.construct_base();
+        }
 
         let mut base_height = None;
         let mut prev_interval = 0;
@@ -979,6 +985,29 @@ impl<D: MerkleDB> ChainState<D> {
         let mut removed_keys = self.remove_versioned_keys_before(self.min_height - 1);
 
         batch.append(&mut removed_keys);
+    }
+
+    fn construct_base(&mut self) {
+        let height = self.height().expect("Failed to get chain height");
+
+        let batch = vec![
+            (
+                AUX_VERSION.to_vec(),
+                Some(AUX_VERSION_02.to_string().into_bytes()),
+            ),
+            (
+                BASE_HEIGHT_KEY.to_vec(),
+                Some(height.to_string().into_bytes()),
+            ),
+            (SNAPSHOT_KEY.to_vec(), Some(0.to_string().into_bytes())),
+        ];
+
+        // todo: move all key-value pairs to base
+
+        //Commit this batch to db
+        self.db
+            .commit(batch, true)
+            .expect("error constructing chain base state");
     }
 
     /// Gets current versioning range of the chain-state

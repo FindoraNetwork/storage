@@ -32,6 +32,7 @@ fn gen_cs_rocks_fresh(path: String) -> ChainState<TempRocksDB> {
         ver_window: 0,
         interval: 0,
         cleanup_aux: true,
+        construct_base: false,
     };
     ChainState::create_with_opts(fdb, opts)
 }

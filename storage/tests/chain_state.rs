@@ -140,6 +140,7 @@ fn test_create_snapshot_1() {
         ver_window: 10,
         interval: 0,
         cleanup_aux: false,
+        construct_base: false,
     };
     let mut chain = ChainState::create_with_opts(fdb, opts);
     assert!(chain.get_snapshots_info().is_empty());
@@ -159,6 +160,7 @@ fn test_create_snapshot_2() {
         ver_window: 10,
         interval: 1,
         cleanup_aux: false,
+        construct_base: false,
     };
     let _ = ChainState::create_with_opts(fdb, opts);
 }
@@ -172,6 +174,7 @@ fn test_create_snapshot_2_1() {
         ver_window: 0,
         interval: 2,
         cleanup_aux: false,
+        construct_base: false,
     };
     let _ = ChainState::create_with_opts(fdb, opts);
 }
@@ -185,6 +188,7 @@ fn test_create_snapshot_2_2() {
         ver_window: 3,
         interval: 2,
         cleanup_aux: false,
+        construct_base: false,
     };
     let _ = ChainState::create_with_opts(fdb, opts);
 }
@@ -199,6 +203,7 @@ fn test_create_snapshot_3() {
         ver_window,
         interval,
         cleanup_aux: false,
+        construct_base: false,
     };
     let snapshot_created_at = interval.saturating_add(1);
     let snapshot_dropped_at = opts.ver_window.saturating_add(interval);
@@ -251,6 +256,7 @@ fn test_create_snapshot_3_1() {
         ver_window,
         interval,
         cleanup_aux: false,
+        construct_base: false,
     };
 
     let snapshot_dropped_at = opts.ver_window.saturating_add(interval);
@@ -290,6 +296,7 @@ fn gen_cs(ver_window: u64, interval: u64) -> ChainState<TempFinDB> {
         ver_window,
         interval,
         cleanup_aux: false,
+        construct_base: false,
     };
     ChainState::create_with_opts(fdb, opts)
 }
@@ -456,6 +463,7 @@ fn gen_findb_cs(
         ver_window,
         interval,
         cleanup_aux: false,
+        construct_base: false,
     };
 
     (path, ChainState::create_with_opts(fdb, opts))
