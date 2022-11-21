@@ -29,6 +29,8 @@ pub trait MerkleDB {
 
     fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_>;
 
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>;
+
     fn commit(&mut self, kvs: KVBatch, flush: bool) -> Result<()>;
 
     fn snapshot<P: AsRef<Path>>(&self, path: P) -> Result<()>;
