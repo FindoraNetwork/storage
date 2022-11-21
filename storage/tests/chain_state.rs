@@ -447,6 +447,16 @@ fn gen_findb_cs(
     ver_window: u64,
     interval: u64,
 ) -> (String, ChainState<FinDB>) {
+    gen_findb_cs_v2(exist, ver_window, interval, false, false)
+}
+
+fn gen_findb_cs_v2(
+    exist: Option<String>,
+    ver_window: u64,
+    interval: u64,
+    cleanup_aux: bool,
+    construct_base: bool,
+) -> (String, ChainState<FinDB>) {
     let path = exist.unwrap_or_else(|| {
         let time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -462,8 +472,8 @@ fn gen_findb_cs(
         name: Some("findb".to_string()),
         ver_window,
         interval,
-        cleanup_aux: false,
-        construct_base: false,
+        cleanup_aux,
+        construct_base,
     };
 
     (path, ChainState::create_with_opts(fdb, opts))
@@ -737,7 +747,7 @@ fn test_chain_reload_with_ver_window_3() {
 #[test]
 fn test_chain_no_version() {
     println!("ver_window 0 interval 0");
-    let (path, mut cs) = gen_findb_cs(None, 0, 0);
+    let (path, mut cs) = gen_findb_cs_v2(None, 0, 0, false, false);
     // key: b"test-key"
     commit_n(&mut cs, 99);
 
@@ -754,23 +764,21 @@ fn test_chain_no_version() {
     drop(cs);
 
     println!("ver_window 100 interval 5");
-    let (path, mut cs) = gen_findb_cs(Some(path), 100, 5);
+    let (path, mut cs) = gen_findb_cs_v2(Some(path), 100, 5, false, true);
     // current_height 99  99 < 100+1
     expect_same(&cs, 0, 99, None);
+    assert_eq!(
+        cs.get_ver(b"test_key", 99).unwrap(),
+        Some(b"val-99".to_vec())
+    );
+    assert_eq!(
+        cs.get_ver(b"another_test_key", 99).unwrap(),
+        Some(b"val-99".to_vec())
+    );
     assert_eq!(cs.get(b"test_key").unwrap(), Some(b"val-99".to_vec()));
     // move forward
     commit_range(&mut cs, 100, 150);
-
     // current_height 149, base_height 48
-    // If no update on this key, it will never be fetched by `get_ver`
-    // Need to be Fixed
-    assert_eq!(cs.get_ver(b"another_test_key", 99).unwrap(), None);
-    assert_eq!(cs.get_ver(b"another_test_key", 100).unwrap(), None);
-    assert_eq!(
-        cs.get(b"another_test_key").unwrap(),
-        Some(format!("val-{}", 99).into_bytes())
-    );
-    assert_eq!(cs.get_ver(b"test_key", 99).unwrap(), None);
     assert_eq!(
         cs.get_ver(b"test_key", 100).unwrap(),
         Some(format!("val-{}", 100).into_bytes())

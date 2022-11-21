@@ -262,13 +262,9 @@ impl<D: MerkleDB> ChainState<D> {
         true
     }
 
-    pub fn all_iterator(
-        &self,
-        order: IterOrder,
-        func: &mut dyn FnMut(KValue) -> bool,
-    ) -> bool {
+    pub fn all_iterator(&self, order: IterOrder, func: &mut dyn FnMut(KValue) -> bool) -> bool {
         // Get DB iterator
-        let mut db_iter = self.db.db_all_iterator( order);
+        let mut db_iter = self.db.db_all_iterator(order);
         let mut stop = false;
 
         // Loop through each entry in range
@@ -1011,7 +1007,7 @@ impl<D: MerkleDB> ChainState<D> {
     fn construct_base(&mut self) {
         let height = self.height().expect("Failed to get chain height");
 
-        let batch = vec![
+        let mut batch = vec![
             (
                 AUX_VERSION.to_vec(),
                 Some(AUX_VERSION_02.to_string().into_bytes()),
@@ -1023,7 +1019,12 @@ impl<D: MerkleDB> ChainState<D> {
             (SNAPSHOT_KEY.to_vec(), Some(0.to_string().into_bytes())),
         ];
 
-        // todo: move all key-value pairs to base
+        self.all_iterator(IterOrder::Asc, &mut |(k, v)| -> bool {
+            let base_key = Self::base_key(&k);
+            // println!("base_key : {:?}, base_value : {:?}",std::str::from_utf8(&base_key), std::str::from_utf8(&v));
+            batch.push((base_key, Some(v)));
+            false
+        });
 
         //Commit this batch to db
         self.db
@@ -1266,27 +1267,24 @@ impl<D: MerkleDB> ChainState<D> {
     }
 
     // hMove all the data before the specified height to base
-    pub fn height_internal_to_base(
-        &mut self,
-        height: u64,
-    ) -> Result<()> {
+    pub fn height_internal_to_base(&mut self, height: u64) -> Result<()> {
         let mut batch = KVBatch::new();
 
         //let last_base_height = self.base_height().c(d!("error reading last base height"))?;
         //let lower = Prefix::new(b"key-1");
-       // let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
+        // let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
         //let upper =  Prefix::new(b"key-100");
 
-         self.all_iterator(
-            IterOrder::Asc,
-            &mut |(k, v)| -> bool {
-                let base_key = Self::base_key(&k);
-               // println!("base_key : {:?}, base_value : {:?}",std::str::from_utf8(&base_key), std::str::from_utf8(&v));
-                batch.push((base_key, Some(v)));
-                false
-            },
-        );
-        batch.push((BASE_HEIGHT_KEY.to_vec(), Some(height.to_string().into_bytes())));
+        self.all_iterator(IterOrder::Asc, &mut |(k, v)| -> bool {
+            let base_key = Self::base_key(&k);
+            // println!("base_key : {:?}, base_value : {:?}",std::str::from_utf8(&base_key), std::str::from_utf8(&v));
+            batch.push((base_key, Some(v)));
+            false
+        });
+        batch.push((
+            BASE_HEIGHT_KEY.to_vec(),
+            Some(height.to_string().into_bytes()),
+        ));
         if self.db.commit(batch, true).is_err() {
             panic!("error move before a certain height chain state");
         }
