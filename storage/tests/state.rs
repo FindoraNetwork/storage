@@ -479,7 +479,7 @@ fn test_height_internal_to_base() {
     for k in 0..batch_size {
         let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
         let value = format!("val-{}", k);
-       // println!("height_internal_to_base_key：{:?}", std::str::from_utf8(&key).unwrap());
+        // println!("height_internal_to_base_key：{:?}", std::str::from_utf8(&key).unwrap());
         assert_eq!(
             cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
             value.as_bytes()
@@ -656,12 +656,18 @@ fn test_clean_aux() {
         Some(b"25".to_vec())
     );
     cs_tfdb.clean_aux().unwrap();
-    assert_eq!(cs_tfdb.get_aux(&b"Height".to_vec()).unwrap(), None);
+    assert_eq!(
+        cs_tfdb.get_aux(&b"Height".to_vec()).unwrap(),
+        Some(b"25".to_vec())
+    );
     std::mem::drop(cs_tfdb);
     let mut cs_fin_path = path_base.clone();
     cs_fin_path.push_str("cs_fin");
     let cs_fin = gen_cs_rocks_fresh(cs_fin_path);
-    assert_eq!(cs_fin.get_aux(&b"Height".to_vec()).unwrap(), None);
+    assert_eq!(
+        cs_fin.get_aux(&b"Height".to_vec()).unwrap(),
+        Some(b"0".to_vec())
+    );
 
     // // test ChainState on RocksDB
     // let mut cs_rocks_path = path_base.clone();

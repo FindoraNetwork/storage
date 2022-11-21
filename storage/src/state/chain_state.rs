@@ -1021,7 +1021,6 @@ impl<D: MerkleDB> ChainState<D> {
 
         self.all_iterator(IterOrder::Asc, &mut |(k, v)| -> bool {
             let base_key = Self::base_key(&k);
-            // println!("base_key : {:?}, base_value : {:?}",std::str::from_utf8(&base_key), std::str::from_utf8(&v));
             batch.push((base_key, Some(v)));
             false
         });
@@ -1050,7 +1049,11 @@ impl<D: MerkleDB> ChainState<D> {
     }
 
     pub fn clean_aux(&mut self) -> Result<()> {
-        self.db.clean_aux()
+        let height = self.height().expect("Failed to read chain height");
+        let batch = vec![(HEIGHT_KEY.to_vec(), Some(height.to_string().into_bytes()))];
+
+        self.db.clean_aux()?;
+        self.db.commit(batch, true)
     }
 
     /// get current pinned height
@@ -1270,17 +1273,12 @@ impl<D: MerkleDB> ChainState<D> {
     pub fn height_internal_to_base(&mut self, height: u64) -> Result<()> {
         let mut batch = KVBatch::new();
 
-        //let last_base_height = self.base_height().c(d!("error reading last base height"))?;
-        //let lower = Prefix::new(b"key-1");
-        // let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
-        //let upper =  Prefix::new(b"key-100");
-
         self.all_iterator(IterOrder::Asc, &mut |(k, v)| -> bool {
             let base_key = Self::base_key(&k);
-            // println!("base_key : {:?}, base_value : {:?}",std::str::from_utf8(&base_key), std::str::from_utf8(&v));
             batch.push((base_key, Some(v)));
             false
         });
+
         batch.push((
             BASE_HEIGHT_KEY.to_vec(),
             Some(height.to_string().into_bytes()),

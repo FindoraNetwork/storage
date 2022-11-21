@@ -765,7 +765,7 @@ fn test_chain_no_version() {
 
     println!("ver_window 100 interval 5");
     let (path, mut cs) = gen_findb_cs_v2(Some(path), 100, 5, false, true);
-    // current_height 99  99 < 100+1
+    // current_height 99  base_height 99
     expect_same(&cs, 0, 99, None);
     assert_eq!(
         cs.get_ver(b"test_key", 99).unwrap(),
@@ -778,12 +778,42 @@ fn test_chain_no_version() {
     assert_eq!(cs.get(b"test_key").unwrap(), Some(b"val-99".to_vec()));
     // move forward
     commit_range(&mut cs, 100, 150);
-    // current_height 149, base_height 48
+    // current_height 149, base_height 99
     assert_eq!(
         cs.get_ver(b"test_key", 100).unwrap(),
-        Some(format!("val-{}", 100).into_bytes())
+        Some(b"val-100".to_vec())
+    );
+    assert_eq!(
+        cs.get_ver(b"another_test_key", 100).unwrap(),
+        Some(b"val-99".to_vec())
     );
 
+    drop(cs);
+
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn test_chain_no_version_1() {
+    println!("ver_window 100 interval 5");
+    let (path, mut cs) = gen_findb_cs_v2(None, 100, 5, false, false);
+    commit_n(&mut cs, 120);
+    // current_height 119, base_height 18
+    expect_same(&cs, 0, 18, None);
+    compare_n(&cs, 18, 120);
+    expect_same(&cs, 120, 130, Some(b"val-119".to_vec()));
+    drop(cs);
+
+    // cleanup aux
+    let (path, cs) = gen_findb_cs_v2(Some(path), 0, 0, true, false);
+    drop(cs);
+
+    // reconstruct
+    let (path, cs) = gen_findb_cs_v2(Some(path), 100, 5, false, true);
+    // current_height 119 base_height 119
+    expect_same(&cs, 0, 119, None);
+    compare_n(&cs, 119, 120);
+    expect_same(&cs, 120, 130, Some(b"val-119".to_vec()));
     drop(cs);
 
     std::fs::remove_dir_all(path).unwrap();
