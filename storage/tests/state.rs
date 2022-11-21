@@ -2,7 +2,7 @@ extern crate core;
 
 
 
-use fin_db::{FinDB, RocksDB};
+use fin_db::{FinDB};
 use mem_db::MemoryDB;
 use parking_lot::RwLock;
 use rand::Rng;

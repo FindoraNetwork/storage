@@ -322,7 +322,7 @@ impl MerkleDB for RocksDB {
     }
     fn export_aux(&mut self,cs: &mut Self) -> Result<()>{
         let  aux_cf = self.db.cf_handle(CF_STATE).unwrap();
-        for (k, v) in self.db.iterator_cf(aux_cf, IteratorMode::Start) {
+        for (k, v) in self.db.iterator_cf(aux_cf, rocksdb::IteratorMode::Start) {
             let expected = vec![
                 (k.to_vec(), Some(v.to_vec())),
             ];
