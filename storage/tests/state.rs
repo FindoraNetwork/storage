@@ -492,6 +492,87 @@ fn test_height_internal_to_base() {
 }
 
 #[test]
+fn test_base_data_update() {
+    let path = thread::current().name().unwrap().to_owned();
+    let fdb = TempFinDB::open(path).expect("failed to open db");
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 100);
+
+    let batch_size = 7;
+    let mut batch: KVBatch = KVBatch::new();
+    for j in 0..batch_size {
+        let key = format!("key-{}", j);
+        let val = format!("val-{}", j);
+        batch.push((Vec::from(key), Some(Vec::from(val))));
+    }
+
+    let _ = cs.commit(batch, 10, false);
+    cs.height_internal_to_base(10).unwrap();
+
+    let mut batch: KVBatch = KVBatch::new();
+    for j in 0..batch_size {
+        let key = format!("key-{}", j);
+        let val = format!("val-{}", j+1);
+        batch.push((Vec::from(key), Some(Vec::from(val))));
+    }
+    let _ = cs.commit(batch, 10, false);
+
+    cs.height_internal_to_base(10).unwrap();
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
+        let value = format!("val-{}", k+1);
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+}
+
+#[test]
+fn test_aux_data_update() {
+    let path = thread::current().name().unwrap().to_owned();
+    let fdb = TempFinDB::open(path).expect("failed to open db");
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 100);
+
+    let batch_size = 7;
+    let mut batch: KVBatch = KVBatch::new();
+    for j in 0..batch_size {
+        let key = format!("key-{}", j);
+        let val = format!("val-{}", j);
+        batch.push((Vec::from(key), Some(Vec::from(val))));
+    }
+
+    let _ = cs.commit(batch, 10, false);
+    let mut batch: KVBatch = KVBatch::new();
+    for j in 0..batch_size {
+        let key = format!("key-{}", j);
+        let val = format!("val-{}", j+1);
+        batch.push((Vec::from(key), Some(Vec::from(val))));
+    }
+    let _ = cs.commit(batch, 10, false);
+
+    cs.height_internal_to_base(10).unwrap();
+
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), 10);
+        let value = format!("val-{}", k+1);
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
+        let value = format!("val-{}", k+1);
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+}
+
+
+#[test]
 fn test_build_state() {
     let path = thread::current().name().unwrap().to_owned();
     let fdb = TempFinDB::open(path).expect("failed to open db");
