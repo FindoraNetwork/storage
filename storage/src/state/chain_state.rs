@@ -70,6 +70,12 @@ pub struct ChainStateOpts {
 
 }
 
+pub enum DeletStatus {
+     Base,
+     Ver((u64, u64)),
+     Key(Vec<u8>),
+}
+
 /// Implementation of of the concrete ChainState struct
 impl<D: MerkleDB> ChainState<D> {
     /// Creates a new instance of the ChainState.
@@ -1256,5 +1262,48 @@ impl<D: MerkleDB> ChainState<D> {
         let current = self.height()?;
 
         Ok((self.min_height, current))
+    }
+
+    pub fn delete_option(&mut self, option:DeletStatus)-> Result<()>
+    {
+        let mut batch = KVBatch::new();
+        match option {
+            DeletStatus::Base => {
+                let base_key = Self::base_key_prefix();
+
+                self.iterate_aux(
+                    base_key.begin().as_ref(),
+                    base_key.end().as_ref(),
+                    IterOrder::Asc,
+                    &mut |(k, _v)| -> bool {
+                        //Delete the key from aux db
+                        batch.push((k, None));
+                        false
+                    },
+                );
+            }
+            DeletStatus::Ver((lower, upper)) => {
+                let lower = Prefix::new("VER".as_bytes()).push(Self::height_str(lower).as_bytes());
+                let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(upper).as_bytes());
+                //Create an empty batch
+                self.iterate_aux(
+                    lower.begin().as_ref(),
+                    upper.as_ref(),
+                    IterOrder::Asc,
+                    &mut |(k, _v)| -> bool {
+                        //Delete the key from aux db
+                        batch.push((k, None));
+                        false
+                    },
+                );
+            }
+            DeletStatus::Key(key) => {
+                batch.push((key, None));
+            }
+        }
+        self.db
+            .commit(batch, true)
+            .expect("error constructing chain base state");
+        Ok(())
     }
 }
