@@ -489,11 +489,9 @@ fn test_delete_base() {
         )
     }
     cs.delete_option(DeletStatus::Base);
-    assert_eq!(cs.get_aux(b"BaseHeight").unwrap(), None);
 
     for k in 0..batch_size {
         let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
-        let value = format!("val-{}", k);
         assert_eq!(
             cs.get_aux(key.as_slice()).unwrap(),
            None,
