@@ -3,6 +3,7 @@ use mem_db::MemoryDB;
 use parking_lot::RwLock;
 use rand::Rng;
 use std::{sync::Arc, thread};
+use storage::state::{chain_state::DeletStatus, IterateStatus};
 use storage::{
     db::{IterOrder, KVBatch, KValue, MerkleDB},
     state::{ChainState, ChainStateOpts, State},
@@ -107,9 +108,8 @@ fn test_iterate_impl<D: MerkleDB>(mut cs: ChainState<D>) {
         index += 1;
         false
     };
-    cs.iterate(
-        &b"k10".to_vec(),
-        &b"k81".to_vec(),
+    cs.iterate_db(
+        IterateStatus::Db((b"k10".to_vec(), b"k81".to_vec())),
         IterOrder::Asc,
         &mut func_iter,
     );
@@ -184,9 +184,8 @@ fn test_commit_impl<D: MerkleDB>(mut cs: ChainState<D>) {
         index += 1;
         false
     };
-    cs.iterate(
-        &b"k10".to_vec(),
-        &b"k81".to_vec(),
+    cs.iterate_db(
+        IterateStatus::Db((b"k10".to_vec(), b"k81".to_vec())),
         IterOrder::Asc,
         &mut func_iter,
     );
@@ -450,6 +449,134 @@ fn test_prune_aux_batch() {
 }
 
 #[test]
+fn test_delete_base() {
+    let path = thread::current().name().unwrap().to_owned();
+    let fdb = TempFinDB::open(path).expect("failed to open db");
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 100);
+
+    let batch_size = 7;
+    let mut batch: KVBatch = KVBatch::new();
+    for j in 0..batch_size {
+        let key = format!("key-{}", j);
+        let val = format!("val-{}", j);
+        batch.push((Vec::from(key), Some(Vec::from(val))));
+    }
+
+    let _ = cs.commit(batch, 10, false);
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), 10);
+        let value = format!("val-{}", k);
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+    cs.height_internal_to_base(10).unwrap();
+
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
+        let value = format!("val-{}", k);
+        // println!("height_internal_to_base_key：{:?}", std::str::from_utf8(&key).unwrap());
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+    let _ = cs.delete_option(DeletStatus::Base);
+
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
+        assert_eq!(cs.get_aux(key.as_slice()).unwrap(), None,)
+    }
+}
+
+#[test]
+fn test_delete_option_ver() {
+    let path = thread::current().name().unwrap().to_owned();
+    let fdb = TempFinDB::open(path).expect("failed to open db");
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 100);
+
+    let number_of_batches = 21;
+    let batch_size = 7;
+
+    for i in 1..number_of_batches {
+        let mut batch: KVBatch = KVBatch::new();
+        for j in 0..batch_size {
+            let key = format!("key-{}", j);
+            let val = format!("val-{}", i);
+            batch.push((Vec::from(key), Some(Vec::from(val))));
+        }
+        let _ = cs.commit(batch, i as u64, false);
+
+        for k in 0..batch_size {
+            let key = ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), i);
+            let value = format!("val-{}", i);
+            assert_eq!(
+                cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+                value.as_bytes()
+            )
+        }
+    }
+    let _ = cs.delete_option(DeletStatus::Ver((1 as u64, 10 as u64)));
+
+    for i in 1..10 {
+        for k in 0..batch_size {
+            let key = ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), i);
+            assert_eq!(cs.get_aux(key.as_slice()).unwrap(), None,)
+        }
+    }
+}
+
+#[test]
+fn test_delete_option_key() {
+    let path = thread::current().name().unwrap().to_owned();
+    let fdb = TempFinDB::open(path).expect("failed to open db");
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 100);
+
+    let batch_size = 7;
+    let mut batch: KVBatch = KVBatch::new();
+    for j in 0..batch_size {
+        let key = format!("key-{}", j);
+        let val = format!("val-{}", j);
+        batch.push((Vec::from(key), Some(Vec::from(val))));
+    }
+
+    let _ = cs.commit(batch, 10, false);
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), 10);
+        let value = format!("val-{}", k);
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+    cs.height_internal_to_base(10).unwrap();
+
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
+        let value = format!("val-{}", k);
+        // println!("height_internal_to_base_key：{:?}", std::str::from_utf8(&key).unwrap());
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+
+    assert_eq!(cs.get_aux(b"BaseHeight").unwrap().unwrap(), b"10".to_vec());
+    let _ = cs.delete_option(DeletStatus::Key(b"BaseHeight".to_vec()));
+    assert_eq!(cs.get_aux(b"BaseHeight").unwrap(), None);
+
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
+        let value = format!("val-{}", k);
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+}
+
+#[test]
 fn test_height_internal_to_base() {
     let path = thread::current().name().unwrap().to_owned();
     let fdb = TempFinDB::open(path).expect("failed to open db");
@@ -485,6 +612,10 @@ fn test_height_internal_to_base() {
         )
     }
     assert_eq!(cs.get_aux(b"BaseHeight").unwrap().unwrap(), b"10".to_vec());
+
+    let _ = cs.delete_option(DeletStatus::Key(b"BaseHeight".to_vec()));
+    assert_eq!(cs.get_aux(b"BaseHeight").unwrap(), None);
+    // cs.height_internal_to_base(10).unwrap();
 }
 
 #[test]
@@ -519,9 +650,8 @@ fn test_build_state() {
     //Confirm the build_state function produces the same keys and values as the latest state.
     let mut cs_batch = KVBatch::new();
     let bound = Prefix::new("key".as_bytes());
-    cs.iterate(
-        &bound.begin(),
-        &bound.end(),
+    cs.iterate_db(
+        IterateStatus::Db((bound.begin(), bound.end())),
         IterOrder::Asc,
         &mut |(k, v)| -> bool {
             //Delete the key from aux db
