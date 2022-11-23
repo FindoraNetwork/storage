@@ -6,7 +6,7 @@ pub mod chain_state;
 
 use crate::db::{IterOrder, KValue, MerkleDB};
 pub use cache::{KVMap, KVecMap, SessionedCache};
-pub use chain_state::{ChainState, ChainStateOpts};
+pub use chain_state::{ChainState, ChainStateOpts, IterateStatus};
 use parking_lot::RwLock;
 use ruc::*;
 use std::sync::Arc;
@@ -165,7 +165,7 @@ impl<D: MerkleDB> State<D> {
             unreachable!()
         }
         let cs = self.chain_state.read();
-        cs.iterate(lower, upper, order, func)
+        cs.iterate_db(IterateStatus::Db((lower.to_vec(), upper.to_vec())), order, func)
     }
 
     /// Iterates the cache for a given prefix

@@ -15,6 +15,7 @@ use std::{
     path::Path,
     str,
 };
+use std::borrow::Borrow;
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const VER_WINDOW: &[u8; 9] = b"VerWindow";
@@ -74,6 +75,12 @@ pub enum DeletStatus {
      Base,
      Ver((u64, u64)),
      Key(Vec<u8>),
+}
+
+pub enum IterateStatus {
+    All, //Iterate over all the values
+    AuxCf((Vec<u8>, Vec<u8>)), //Iterate in aux cf
+    Db((Vec<u8>, Vec<u8>)), //Iterate in rockDb
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -230,6 +237,60 @@ impl<D: MerkleDB> ChainState<D> {
         self.snapshot_info.iter().cloned().collect()
     }
 
+    pub fn handle_kv_pair(
+        &self,
+        status: &IterateStatus,
+        kv_pair: (Box<[u8]>, Box<[u8]>),
+    ) -> KValue {
+        match  status {
+            IterateStatus::All => {self.db.decode_kv(kv_pair)}
+            IterateStatus::AuxCf(_) => {
+                let key = kv_pair.0;
+                let value = kv_pair.1;
+                (key.to_vec(), value.to_vec())
+            }
+            IterateStatus::Db(_) => {self.db.decode_kv(kv_pair)}
+        }
+    }
+
+    /// Iterates MerkleDB allocated in auxiliary section for a given range of keys.
+    ///
+    ///  Parameter 2 status : Select the conditions to traverse and the scope of the traverse
+    ///
+    /// Executes a closure passed as a parameter with the corresponding key value pairs.
+    pub fn iterate_db(
+        &self,
+        status: IterateStatus,
+        order: IterOrder,
+        func: &mut dyn FnMut(KValue) -> bool,
+    ) -> bool {
+        let mut stop = false;
+        let mut db_iter;
+
+        match  &status {
+            IterateStatus::All => {
+                db_iter = self.db.db_all_iterator(order);
+            }
+            IterateStatus::AuxCf((lower, upper)) => {
+                db_iter = self.db.iter_aux(&lower, &upper, order);
+            }
+            IterateStatus::Db((lower, upper)) => {
+                db_iter = self.db.iter(&lower, &upper, order);
+            }
+        }
+
+        while !stop {
+            let kv_pair = match db_iter.next() {
+                Some(result) => result,
+                None => break,
+            };
+            let entry =  self.handle_kv_pair(status.borrow(),kv_pair);
+            stop = func(entry);
+        }
+        true
+    }
+
+    /*
     /// Iterates MerkleDB for a given range of keys.
     ///
     /// Executes a closure passed as a parameter with the corresponding key value pairs.
@@ -256,60 +317,7 @@ impl<D: MerkleDB> ChainState<D> {
         }
         true
     }
-
-    pub fn all_iterator(
-        &self,
-        order: IterOrder,
-        func: &mut dyn FnMut(KValue) -> bool,
-    ) -> bool {
-        // Get DB iterator
-        let mut db_iter = self.db.db_all_iterator( order);
-        let mut stop = false;
-
-        // Loop through each entry in range
-        while !stop {
-            let kv_pair = match db_iter.next() {
-                Some(result) => result,
-                None => break,
-            };
-
-            let entry = self.db.decode_kv(kv_pair);
-            stop = func(entry);
-        }
-        true
-    }
-
-    /// Iterates MerkleDB allocated in auxiliary section for a given range of keys.
-    ///
-    /// Executes a closure passed as a parameter with the corresponding key value pairs.
-    pub fn iterate_aux(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-        func: &mut dyn FnMut(KValue) -> bool,
-    ) -> bool {
-        // Get DB iterator
-        let mut db_iter = self.db.iter_aux(lower, upper, order);
-        let mut stop = false;
-
-        // Loop through each entry in range
-        while !stop {
-            let kv_pair = match db_iter.next() {
-                Some(result) => result,
-                None => break,
-            };
-
-            //AUX data doesn't need to be decoded
-            let key = kv_pair.0;
-            let value = kv_pair.1;
-
-            let entry: KValue = (key.to_vec(), value.to_vec());
-            stop = func(entry);
-        }
-        true
-    }
-
+*/
     /// Queries the DB for existence of a key.
     ///
     /// Returns a bool wrapped in a result as the query involves DB access.
@@ -343,9 +351,8 @@ impl<D: MerkleDB> ChainState<D> {
         let pruning_height = Self::height_str(height - self.ver_window - 1);
         let pruning_prefix = Prefix::new("VER".as_bytes()).push(pruning_height.as_bytes());
         // move key-value pairs of left window side to baseline
-        self.iterate_aux(
-            &pruning_prefix.begin(),
-            &pruning_prefix.end(),
+        self.iterate_db(
+            IterateStatus::AuxCf((pruning_prefix.begin(), pruning_prefix.end())),
             IterOrder::Asc,
             &mut |(k, v)| -> bool {
                 let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
@@ -493,9 +500,8 @@ impl<D: MerkleDB> ChainState<D> {
             let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(h + 1).as_bytes());
 
             // collect commits on this height
-            self.iterate_aux(
-                &lower.begin(),
-                &upper.begin(),
+            self.iterate_db(
+                IterateStatus::AuxCf((lower.begin(), upper.begin())),
                 IterOrder::Asc,
                 &mut |(k, v)| -> bool {
                     let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
@@ -690,9 +696,8 @@ impl<D: MerkleDB> ChainState<D> {
         let mut batch = KVBatch::new();
 
         //Iterate aux data and delete keys within bounds
-        self.iterate_aux(
-            lower.begin().as_ref(),
-            upper.as_ref(),
+        self.iterate_db(
+            IterateStatus::AuxCf((lower.begin(), upper.as_ref().to_vec())),
             IterOrder::Asc,
             &mut |(k, _v)| -> bool {
                 //Delete the key from aux db
@@ -712,9 +717,8 @@ impl<D: MerkleDB> ChainState<D> {
         let mut batch = KVBatch::new();
 
         //Iterate aux data and delete keys within bounds
-        self.iterate_aux(
-            base.begin().as_ref(),
-            base.end().as_ref(),
+        self.iterate_db(
+            IterateStatus::AuxCf((base.begin(), base.end())),
             IterOrder::Asc,
             &mut |(k, _v)| -> bool {
                 //Delete the key from aux db
@@ -739,9 +743,8 @@ impl<D: MerkleDB> ChainState<D> {
         let upper =
             Prefix::new("SNAPSHOT".as_bytes()).push(Self::height_str(height + 1).as_bytes());
 
-        self.iterate_aux(
-            lower.as_ref(),
-            upper.as_ref(),
+        self.iterate_db(
+            IterateStatus::AuxCf((lower.as_ref().to_vec(), upper.as_ref().to_vec())),
             IterOrder::Asc,
             &mut |(k, _)| -> bool {
                 // Only remove versioned kv pairs
@@ -765,9 +768,8 @@ impl<D: MerkleDB> ChainState<D> {
 
         let mut count = 0u64;
 
-        self.iterate_aux(
-            lower.as_ref(),
-            upper.as_ref(),
+        self.iterate_db(
+            IterateStatus::AuxCf((lower.as_ref().to_vec(), upper.as_ref().to_vec())),
             IterOrder::Asc,
             &mut |(k, _v)| -> bool {
                 let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
@@ -799,9 +801,8 @@ impl<D: MerkleDB> ChainState<D> {
         }
         let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(e + 1).as_bytes());
 
-        self.iterate_aux(
-            lower.begin().as_ref(),
-            upper.as_ref(),
+        self.iterate_db(
+            IterateStatus::AuxCf((lower.begin(), upper.as_ref().to_vec())),
             IterOrder::Asc,
             &mut |(k, v)| -> bool {
                 let raw_key = Self::get_raw_versioned_key(&k).unwrap_or_default();
@@ -846,7 +847,8 @@ impl<D: MerkleDB> ChainState<D> {
     ) -> Result<(bool, Option<Vec<u8>>)> {
         let mut val = Ok((false, None));
 
-        let _ = self.iterate_aux(&lower, &upper, order, &mut |(ver_k, v)| {
+        let _ = self.iterate_db(IterateStatus::AuxCf((lower, upper)),
+                                order, &mut |(ver_k, v)| {
             if let Ok(k) = Self::get_raw_versioned_key(&ver_k) {
                 if k.as_bytes().eq(key) {
                     val = Ok((true, if !v.eq(&TOMBSTONE) { Some(v) } else { None }));
@@ -997,21 +999,18 @@ impl<D: MerkleDB> ChainState<D> {
     ) -> Result<()> {
         let mut batch = KVBatch::new();
 
-        //let last_base_height = self.base_height().c(d!("error reading last base height"))?;
-        //let lower = Prefix::new(b"key-1");
-       // let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(height + 1).as_bytes());
-        //let upper =  Prefix::new(b"key-100");
+        self.iterate_db(
+            IterateStatus::All,
+            IterOrder::Asc, &mut |(k, v)| -> bool {
+            let base_key = Self::base_key(&k);
+            batch.push((base_key, Some(v)));
+            false
+        });
 
-         self.all_iterator(
-            IterOrder::Asc,
-            &mut |(k, v)| -> bool {
-                let base_key = Self::base_key(&k);
-               // println!("base_key : {:?}, base_value : {:?}",std::str::from_utf8(&base_key), std::str::from_utf8(&v));
-                batch.push((base_key, Some(v)));
-                false
-            },
-        );
-        batch.push((BASE_HEIGHT_KEY.to_vec(), Some(height.to_string().into_bytes())));
+        batch.push((
+            BASE_HEIGHT_KEY.to_vec(),
+            Some(height.to_string().into_bytes()),
+        ));
         if self.db.commit(batch, true).is_err() {
             panic!("error move before a certain height chain state");
         }
@@ -1271,9 +1270,8 @@ impl<D: MerkleDB> ChainState<D> {
             DeletStatus::Base => {
                 let base_key = Self::base_key_prefix();
 
-                self.iterate_aux(
-                    base_key.begin().as_ref(),
-                    base_key.end().as_ref(),
+                self.iterate_db(
+                    IterateStatus::AuxCf((base_key.begin(), base_key.end())),
                     IterOrder::Asc,
                     &mut |(k, _v)| -> bool {
                         //Delete the key from aux db
@@ -1286,9 +1284,8 @@ impl<D: MerkleDB> ChainState<D> {
                 let lower = Prefix::new("VER".as_bytes()).push(Self::height_str(lower).as_bytes());
                 let upper = Prefix::new("VER".as_bytes()).push(Self::height_str(upper).as_bytes());
                 //Create an empty batch
-                self.iterate_aux(
-                    lower.begin().as_ref(),
-                    upper.as_ref(),
+                self.iterate_db(
+                    IterateStatus::AuxCf((lower.begin(), upper.as_ref().to_vec())),
                     IterOrder::Asc,
                     &mut |(k, _v)| -> bool {
                         //Delete the key from aux db
