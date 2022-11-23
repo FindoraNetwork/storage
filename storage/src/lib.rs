@@ -50,7 +50,7 @@ clippy::decimal_literal_representation,
 //clippy::default_numeric_fallback, too verbose when dealing with numbers
 clippy::disallowed_script_idents,
 clippy::else_if_without_else,
-//clippy::exhaustive_enums,
+clippy::exhaustive_enums,
 clippy::exhaustive_structs,
 clippy::exit,
 clippy::expect_used,

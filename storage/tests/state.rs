@@ -8,7 +8,7 @@ use storage::{
     state::{ChainState, ChainStateOpts, State},
     store::Prefix,
 };
-use storage::state::chain_state::DeletStatus;
+use storage::state::{chain_state::DeletStatus, IterateStatus};
 use temp_db::{TempFinDB, TempRocksDB};
 
 const VER_WINDOW: u64 = 100;
@@ -108,9 +108,8 @@ fn test_iterate_impl<D: MerkleDB>(mut cs: ChainState<D>) {
         index += 1;
         false
     };
-    cs.iterate(
-        &b"k10".to_vec(),
-        &b"k81".to_vec(),
+    cs.iterate_db(
+        IterateStatus::Db((b"k10".to_vec(), b"k81".to_vec())),
         IterOrder::Asc,
         &mut func_iter,
     );
@@ -185,9 +184,8 @@ fn test_commit_impl<D: MerkleDB>(mut cs: ChainState<D>) {
         index += 1;
         false
     };
-    cs.iterate(
-        &b"k10".to_vec(),
-        &b"k81".to_vec(),
+    cs.iterate_db(
+        IterateStatus::Db((b"k10".to_vec(), b"k81".to_vec())),
         IterOrder::Asc,
         &mut func_iter,
     );
@@ -484,7 +482,7 @@ fn test_delete_base() {
             value.as_bytes()
         )
     }
-    cs.delete_option(DeletStatus::Base);
+    let _ = cs.delete_option(DeletStatus::Base);
 
     for k in 0..batch_size {
         let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
@@ -522,7 +520,7 @@ fn test_delete_option_ver() {
             )
         }
     }
-    cs.delete_option(DeletStatus::Ver((1 as u64, 10 as u64)));
+    let _ = cs.delete_option(DeletStatus::Ver((1 as u64, 10 as u64)));
 
     for i in 1..10 {
         for k in 0..batch_size {
@@ -568,7 +566,7 @@ fn test_delete_option_key() {
     }
 
     assert_eq!(cs.get_aux(b"BaseHeight").unwrap().unwrap(), b"10".to_vec());
-    cs.delete_option(DeletStatus::Key(b"BaseHeight".to_vec()));
+    let _ = cs.delete_option(DeletStatus::Key(b"BaseHeight".to_vec()));
     assert_eq!(cs.get_aux(b"BaseHeight").unwrap(), None);
 
     for k in 0..batch_size {
@@ -618,7 +616,7 @@ fn test_height_internal_to_base() {
     }
     assert_eq!(cs.get_aux(b"BaseHeight").unwrap().unwrap(), b"10".to_vec());
 
-    cs.delete_option(DeletStatus::Key(b"BaseHeight".to_vec()));
+    let _ = cs.delete_option(DeletStatus::Key(b"BaseHeight".to_vec()));
     assert_eq!(cs.get_aux(b"BaseHeight").unwrap(), None);
    // cs.height_internal_to_base(10).unwrap();
 }
@@ -655,9 +653,8 @@ fn test_build_state() {
     //Confirm the build_state function produces the same keys and values as the latest state.
     let mut cs_batch = KVBatch::new();
     let bound = Prefix::new("key".as_bytes());
-    cs.iterate(
-        &bound.begin(),
-        &bound.end(),
+    cs.iterate_db(
+        IterateStatus::Db((bound.begin(), bound.end())),
         IterOrder::Asc,
         &mut |(k, v)| -> bool {
             //Delete the key from aux db
