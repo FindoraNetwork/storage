@@ -43,7 +43,7 @@ pub struct SnapShotInfo {
 /// Concrete ChainState struct containing a reference to an instance of MerkleDB, a name and
 /// current tree height.
 pub struct ChainState<D: MerkleDB> {
-    _name: String,
+    name: String,
     ver_window: u64,
     interval: u64,
     snapshot_info: VecDeque<SnapShotInfo>,
@@ -104,7 +104,7 @@ impl<D: MerkleDB> ChainState<D> {
         }
 
         let mut cs = ChainState {
-            _name: db_name,
+            name: db_name,
             ver_window: opts.ver_window,
             interval: opts.interval,
             snapshot_info: Default::default(),
@@ -159,6 +159,11 @@ impl<D: MerkleDB> ChainState<D> {
                 panic!("Invalid db version");
             }
         }
+
+        println!(
+            "{} {} {:?} {}",
+            cs.name, cs.version, base_height, prev_interval
+        );
 
         let mut batch = KVBatch::new();
         cs.clean_aux_db(&mut base_height, &mut batch);
@@ -874,10 +879,12 @@ impl<D: MerkleDB> ChainState<D> {
             if snapshot_at > 0 && snapshot_at % self.interval == 0 {
                 let mut batch = self.remove_snapshot(snapshot_at);
                 aux_batch.append(&mut batch);
-                if let Some(last) = self.snapshot_info.pop_front() {
-                    assert_eq!(last.end, snapshot_at);
-                } else {
-                    unreachable!()
+                while let Some(last) = self.snapshot_info.front() {
+                    if last.end <= snapshot_at {
+                        self.snapshot_info.pop_front();
+                    } else {
+                        break;
+                    }
                 }
             }
         }
@@ -967,7 +974,6 @@ impl<D: MerkleDB> ChainState<D> {
         //Get current height
         let current_height = self.height().expect("failed to get chain height");
         if current_height == 0 {
-            assert!(base_height.is_none());
             return;
         }
         if current_height < self.ver_window + 1 {
@@ -1017,6 +1023,7 @@ impl<D: MerkleDB> ChainState<D> {
             ),
             (SNAPSHOT_KEY.to_vec(), Some(0.to_string().into_bytes())),
         ];
+        println!("{} construct base {}", self.name, height);
 
         self.all_iterator(IterOrder::Asc, &mut |(k, v)| -> bool {
             let base_key = Self::base_key(&k);
