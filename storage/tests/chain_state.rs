@@ -140,7 +140,6 @@ fn test_create_snapshot_1() {
         ver_window: 10,
         interval: 0,
         cleanup_aux: false,
-        construct_base: false,
     };
     let mut chain = ChainState::create_with_opts(fdb, opts);
     assert!(chain.get_snapshots_info().is_empty());
@@ -160,7 +159,6 @@ fn test_create_snapshot_2() {
         ver_window: 10,
         interval: 1,
         cleanup_aux: false,
-        construct_base: false,
     };
     let _ = ChainState::create_with_opts(fdb, opts);
 }
@@ -174,7 +172,6 @@ fn test_create_snapshot_2_1() {
         ver_window: 0,
         interval: 2,
         cleanup_aux: false,
-        construct_base: false,
     };
     let _ = ChainState::create_with_opts(fdb, opts);
 }
@@ -188,7 +185,6 @@ fn test_create_snapshot_2_2() {
         ver_window: 3,
         interval: 2,
         cleanup_aux: false,
-        construct_base: false,
     };
     let _ = ChainState::create_with_opts(fdb, opts);
 }
@@ -203,7 +199,6 @@ fn test_create_snapshot_3() {
         ver_window,
         interval,
         cleanup_aux: false,
-        construct_base: false,
     };
     let snapshot_created_at = interval.saturating_add(1);
     let snapshot_dropped_at = opts.ver_window.saturating_add(interval);
@@ -256,7 +251,6 @@ fn test_create_snapshot_3_1() {
         ver_window,
         interval,
         cleanup_aux: false,
-        construct_base: false,
     };
 
     let snapshot_dropped_at = opts.ver_window.saturating_add(interval);
@@ -296,7 +290,6 @@ fn gen_cs(ver_window: u64, interval: u64) -> ChainState<TempFinDB> {
         ver_window,
         interval,
         cleanup_aux: false,
-        construct_base: false,
     };
     ChainState::create_with_opts(fdb, opts)
 }
@@ -332,7 +325,9 @@ fn verify_expectations<DB: MerkleDB>(
         let val = match chain.get_ver(b"test_key", e.0) {
             Err(e) if e.to_string().contains("no versioning info") => None,
             Ok(v) => v,
-            _ => panic!("failed!"),
+            _ => {
+                panic!("failed at height {}", e.0);
+            }
         };
         if val != e.1 {
             println!(
@@ -447,7 +442,7 @@ fn gen_findb_cs(
     ver_window: u64,
     interval: u64,
 ) -> (String, ChainState<FinDB>) {
-    gen_findb_cs_v2(exist, ver_window, interval, false, false)
+    gen_findb_cs_v2(exist, ver_window, interval, false)
 }
 
 fn gen_findb_cs_v2(
@@ -455,7 +450,6 @@ fn gen_findb_cs_v2(
     ver_window: u64,
     interval: u64,
     cleanup_aux: bool,
-    construct_base: bool,
 ) -> (String, ChainState<FinDB>) {
     let path = exist.unwrap_or_else(|| {
         let time = SystemTime::now()
@@ -473,7 +467,6 @@ fn gen_findb_cs_v2(
         ver_window,
         interval,
         cleanup_aux,
-        construct_base,
     };
 
     (path, ChainState::create_with_opts(fdb, opts))
@@ -747,7 +740,7 @@ fn test_chain_reload_with_ver_window_3() {
 #[test]
 fn test_chain_no_version() {
     println!("ver_window 0 interval 0");
-    let (path, mut cs) = gen_findb_cs_v2(None, 0, 0, false, false);
+    let (path, mut cs) = gen_findb_cs_v2(None, 0, 0, false);
     // key: b"test-key"
     commit_n(&mut cs, 99);
 
@@ -764,7 +757,7 @@ fn test_chain_no_version() {
     drop(cs);
 
     println!("ver_window 100 interval 5");
-    let (path, mut cs) = gen_findb_cs_v2(Some(path), 100, 5, false, true);
+    let (path, mut cs) = gen_findb_cs_v2(Some(path), 100, 5, true);
     // current_height 99  base_height 99
     expect_same(&cs, 0, 99, None);
     assert_eq!(
@@ -796,7 +789,7 @@ fn test_chain_no_version() {
 #[test]
 fn test_chain_no_version_1() {
     println!("ver_window 100 interval 5");
-    let (path, mut cs) = gen_findb_cs_v2(None, 100, 5, false, false);
+    let (path, mut cs) = gen_findb_cs_v2(None, 100, 5, false);
     commit_n(&mut cs, 120);
     // current_height 119, base_height 18
     expect_same(&cs, 0, 18, None);
@@ -804,16 +797,17 @@ fn test_chain_no_version_1() {
     expect_same(&cs, 120, 130, Some(b"val-119".to_vec()));
     drop(cs);
 
-    // cleanup aux
-    let (path, cs) = gen_findb_cs_v2(Some(path), 0, 0, true, false);
+    println!("ver_window 0 interval 0");
+    let (path, mut cs) = gen_findb_cs_v2(Some(path), 0, 0, false);
+    commit_range(&mut cs, 120, 130);
     drop(cs);
 
-    // reconstruct
-    let (path, cs) = gen_findb_cs_v2(Some(path), 100, 5, false, true);
-    // current_height 119 base_height 119
-    expect_same(&cs, 0, 119, None);
-    compare_n(&cs, 119, 120);
-    expect_same(&cs, 120, 130, Some(b"val-119".to_vec()));
+    // cleanup aux and reconstruct base
+    let (path, cs) = gen_findb_cs_v2(Some(path), 100, 5, true);
+    // current_height 129 base_height 129
+    expect_same(&cs, 0, 129, None);
+    compare_n(&cs, 129, 130);
+    expect_same(&cs, 130, 140, Some(b"val-129".to_vec()));
     drop(cs);
 
     std::fs::remove_dir_all(path).unwrap();

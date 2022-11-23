@@ -32,7 +32,6 @@ fn gen_cs_rocks_fresh(path: String) -> ChainState<TempRocksDB> {
         ver_window: 0,
         interval: 0,
         cleanup_aux: true,
-        construct_base: false,
     };
     ChainState::create_with_opts(fdb, opts)
 }
@@ -594,6 +593,7 @@ fn test_clean_aux_db() {
 }
 
 #[test]
+#[should_panic]
 fn test_clean_aux() {
     // test FinDB
     let path_base = thread::current().name().unwrap().to_owned();
@@ -663,11 +663,7 @@ fn test_clean_aux() {
     std::mem::drop(cs_tfdb);
     let mut cs_fin_path = path_base.clone();
     cs_fin_path.push_str("cs_fin");
-    let cs_fin = gen_cs_rocks_fresh(cs_fin_path);
-    assert_eq!(
-        cs_fin.get_aux(&b"Height".to_vec()).unwrap(),
-        Some(b"0".to_vec())
-    );
+    let _ = gen_cs_rocks_fresh(cs_fin_path);
 
     // // test ChainState on RocksDB
     // let mut cs_rocks_path = path_base.clone();

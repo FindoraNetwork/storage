@@ -61,7 +61,6 @@ pub struct ChainStateOpts {
     pub ver_window: u64,
     pub interval: u64,
     pub cleanup_aux: bool,
-    pub construct_base: bool,
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -100,6 +99,10 @@ impl<D: MerkleDB> ChainState<D> {
             panic!("ver_window should align at snapshot interval");
         }
 
+        if opts.ver_window == 0 && opts.cleanup_aux {
+            panic!("perform an cleanup_aux and construct base on a no-version chain");
+        }
+
         let mut cs = ChainState {
             _name: db_name,
             ver_window: opts.ver_window,
@@ -111,7 +114,8 @@ impl<D: MerkleDB> ChainState<D> {
             db,
         };
 
-        if opts.construct_base {
+        if opts.cleanup_aux {
+            cs.clean_aux().unwrap();
             // move all keys to base
             cs.construct_base();
         }
@@ -130,7 +134,7 @@ impl<D: MerkleDB> ChainState<D> {
                 // 1. versioned keys are seperated into two sections: `base` and `VER`
 
                 let h = cs.height().expect("Failed to get height");
-                base_height = match h.cmp(&opts.ver_window.saturating_add(1)) {
+                base_height = match h.cmp(&opts.ver_window) {
                     Ordering::Greater => Some(h.saturating_sub(opts.ver_window)),
                     _ => None,
                 };
@@ -156,15 +160,10 @@ impl<D: MerkleDB> ChainState<D> {
             }
         }
 
-        if opts.cleanup_aux {
-            cs.clean_aux().unwrap();
-        } else {
-            let mut batch = KVBatch::new();
-            cs.clean_aux_db(&mut base_height, &mut batch);
-            cs.build_snapshots(base_height, prev_interval, opts.interval, &mut batch);
-            cs.commit_db_with_meta(batch);
-        }
-
+        let mut batch = KVBatch::new();
+        cs.clean_aux_db(&mut base_height, &mut batch);
+        cs.build_snapshots(base_height, prev_interval, opts.interval, &mut batch);
+        cs.commit_db_with_meta(batch);
         cs
     }
 
