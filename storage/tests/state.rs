@@ -1,10 +1,11 @@
 use fin_db::FinDB;
 use mem_db::MemoryDB;
+use parking_lot::RwLock;
 use rand::Rng;
-use std::thread;
+use std::{sync::Arc, thread};
 use storage::{
     db::{IterOrder, KVBatch, KValue, MerkleDB},
-    state::{ChainState, ChainStateOpts},
+    state::{ChainState, ChainStateOpts, State},
     store::Prefix,
 };
 use temp_db::{TempFinDB, TempRocksDB};
@@ -29,7 +30,7 @@ fn gen_cs_rocks_fresh(path: String) -> ChainState<TempRocksDB> {
     let opts = ChainStateOpts {
         name: Some("test_db".to_string()),
         ver_window: 0,
-        _snapshot_interval: 0,
+        interval: 0,
         cleanup_aux: true,
     };
     ChainState::create_with_opts(fdb, opts)
@@ -449,6 +450,44 @@ fn test_prune_aux_batch() {
 }
 
 #[test]
+fn test_height_internal_to_base() {
+    let path = thread::current().name().unwrap().to_owned();
+    let fdb = TempFinDB::open(path).expect("failed to open db");
+    let mut cs = ChainState::new(fdb, "test_db".to_string(), 100);
+
+    let batch_size = 7;
+    let mut batch: KVBatch = KVBatch::new();
+    for j in 0..batch_size {
+        let key = format!("key-{}", j);
+        let val = format!("val-{}", j);
+        batch.push((Vec::from(key), Some(Vec::from(val))));
+    }
+
+    let _ = cs.commit(batch, 10, false);
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::versioned_key(format!("key-{}", k).as_bytes(), 10);
+        let value = format!("val-{}", k);
+        // println!("versioned_key：{:?}, versioned_value:{:?}", std::str::from_utf8(&key).unwrap(), value);
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+
+    cs.height_internal_to_base(10).unwrap();
+    for k in 0..batch_size {
+        let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
+        let value = format!("val-{}", k);
+        // println!("height_internal_to_base_key：{:?}", std::str::from_utf8(&key).unwrap());
+        assert_eq!(
+            cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
+            value.as_bytes()
+        )
+    }
+    assert_eq!(cs.get_aux(b"BaseHeight").unwrap().unwrap(), b"10".to_vec());
+}
+
+#[test]
 fn test_build_state() {
     let path = thread::current().name().unwrap().to_owned();
     let fdb = TempFinDB::open(path).expect("failed to open db");
@@ -554,6 +593,7 @@ fn test_clean_aux_db() {
 }
 
 #[test]
+#[should_panic]
 fn test_clean_aux() {
     // test FinDB
     let path_base = thread::current().name().unwrap().to_owned();
@@ -616,12 +656,14 @@ fn test_clean_aux() {
         Some(b"25".to_vec())
     );
     cs_tfdb.clean_aux().unwrap();
-    assert_eq!(cs_tfdb.get_aux(&b"Height".to_vec()).unwrap(), None);
+    assert_eq!(
+        cs_tfdb.get_aux(&b"Height".to_vec()).unwrap(),
+        Some(b"25".to_vec())
+    );
     std::mem::drop(cs_tfdb);
     let mut cs_fin_path = path_base.clone();
     cs_fin_path.push_str("cs_fin");
-    let cs_fin = gen_cs_rocks_fresh(cs_fin_path);
-    assert_eq!(cs_fin.get_aux(&b"Height".to_vec()).unwrap(), None);
+    let _ = gen_cs_rocks_fresh(cs_fin_path);
 
     // // test ChainState on RocksDB
     // let mut cs_rocks_path = path_base.clone();
@@ -832,4 +874,108 @@ fn test_snapshot() {
     // clean up snapshot 1
     let snap_path_1 = format!("{}_{}_snap", path, 1);
     let _ = TempFinDB::open(snap_path_1).expect("failed to open db snapshot");
+}
+
+#[test]
+fn test_state_at() {
+    let fdb = TempFinDB::new().expect("failed to create fin db");
+    let chain = Arc::new(RwLock::new(ChainState::new(fdb, "test_db".to_string(), 2)));
+    let state = State::new(chain.clone(), true);
+
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v110".to_vec())),
+                (b"k20".to_vec(), Some(b"v120".to_vec())),
+            ],
+            1,
+            true,
+        )
+        .is_ok());
+
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v210".to_vec())),
+                (b"k20".to_vec(), Some(b"v220".to_vec())),
+            ],
+            2,
+            true,
+        )
+        .is_ok());
+
+    let state_1 = state
+        .state_at(1)
+        .expect("failed to create state at height 1");
+
+    let state_2 = state
+        .state_at(2)
+        .expect("failed to create state at height 2");
+
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v310".to_vec())),
+                (b"k20".to_vec(), Some(b"v320".to_vec())),
+            ],
+            3,
+            true,
+        )
+        .is_ok());
+
+    assert!(state_1
+        .get(b"k10")
+        .map_or(false, |v| v == Some(b"v110".to_vec())));
+
+    drop(state_1);
+
+    assert!(state
+        .get(b"k10")
+        .map_or(false, |v| v == Some(b"v310".to_vec())));
+
+    assert!(state_2
+        .get(b"k10")
+        .map_or(false, |v| v == Some(b"v210".to_vec())));
+    drop(state_2);
+
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v410".to_vec())),
+                (b"k20".to_vec(), Some(b"v420".to_vec())),
+            ],
+            4,
+            true,
+        )
+        .is_ok());
+
+    assert!(state
+        .get_ver(b"k10", 1)
+        .map_or(false, |v| v == Some(b"v110".to_vec())));
+    assert!(state
+        .get_ver(b"k10", 2)
+        .map_or(false, |v| v == Some(b"v210".to_vec())));
+
+    // Keys at height 2 are moved to base after this commit
+    assert!(chain
+        .write()
+        .commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v510".to_vec())),
+                (b"k20".to_vec(), Some(b"v520".to_vec())),
+            ],
+            5,
+            true,
+        )
+        .is_ok());
+
+    // Keys at height 1 is in base now and override by height 2
+    assert!(state.get_ver(b"k10", 1).is_err());
+    assert!(state
+        .get_ver(b"k10", 2)
+        .map_or(false, |v| v == Some(b"v210".to_vec())));
 }

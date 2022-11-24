@@ -99,6 +99,15 @@ impl MerkleDB for FinDB {
             IterOrder::Desc => Box::new(self.db.iter_opt_aux(rocksdb::IteratorMode::End, readopts)),
         }
     }
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>
+    {
+        let readopts = rocksdb::ReadOptions::default();
+        match order {
+            IterOrder::Asc => Box::new(self.db.iter_opt(rocksdb::IteratorMode::Start, readopts)),
+            IterOrder::Desc => Box::new(self.db.iter_opt(rocksdb::IteratorMode::End, readopts)),
+        }
+    }
+
 
     /// Commits changes.
     fn commit(&mut self, aux: KVBatch, flush: bool) -> Result<()> {
@@ -254,6 +263,15 @@ impl MerkleDB for RocksDB {
     /// Gets range iterator for aux
     fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         self.iter(lower, upper, order)
+    }
+
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>
+    {
+        let readopts = rocksdb::ReadOptions::default();
+        match order {
+            IterOrder::Asc => Box::new(self.iter_opt(rocksdb::IteratorMode::Start, readopts)),
+            IterOrder::Desc => Box::new(self.iter_opt(rocksdb::IteratorMode::End, readopts)),
+        }
     }
 
     /// Commits changes.
