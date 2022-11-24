@@ -181,6 +181,11 @@ where
     fn delete(&mut self, key: &[u8]) -> Result<()> {
         self.state_mut().delete(key)
     }
+
+    /// deprecated and replaced by `delete`
+    fn delete_v0(&mut self, key: &[u8]) -> Result<()> {
+        self.state_mut().delete_v0(key)
+    }
 }
 
 /// A trait that implements the same functionality above without the requirement of owning a state
@@ -334,5 +339,10 @@ pub trait StatelessStore {
     /// delete KV. Nothing happens if key not found
     fn delete<D: MerkleDB>(state: &mut State<D>, key: &[u8]) -> Result<()> {
         state.delete(key)
+    }
+
+    /// deprecated and replaced by `delete`
+    fn delete_v0<D: MerkleDB>(state: &mut State<D>, key: &[u8]) -> Result<()> {
+        state.delete_v0(key)
     }
 }
