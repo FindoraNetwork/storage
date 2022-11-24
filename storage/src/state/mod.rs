@@ -119,6 +119,18 @@ impl<D: MerkleDB> State<D> {
         Ok(())
     }
 
+    // Deprecated and replaced by `delete`
+    pub fn delete_v0(&mut self, key: &[u8]) -> Result<()> {
+        let cs = self.chain_state.read();
+        match cs.get(key).c(d!())? {
+            //Mark key as deleted
+            Some(_) => self.cache.delete(key),
+            //Remove key from cache
+            None => self.cache.remove(key),
+        }
+        Ok(())
+    }
+
     /// Iterates the ChainState for the given range of keys
     pub fn iterate(
         &self,

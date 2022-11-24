@@ -129,6 +129,19 @@ impl SessionedCache {
         self.delta.insert(key.to_owned(), None);
     }
 
+    /// Remove key-pair (when NOT EXIST in db) from cache
+    ///
+    /// Deprecated and replaced by `delete`
+    pub fn remove(&mut self, key: &[u8]) {
+        // exist in delta
+        if let Some(Some(_)) = self.delta.get(key) {
+            self.delta.remove(key);
+        } else if let Some(Some(_)) = self.base.get(key) {
+            // exist only in base
+            self.delta.insert(key.to_owned(), None);
+        }
+    }
+
     /// commits pending KVs in session
     pub fn commit(&mut self) -> KVBatch {
         // Merge delta into the base version
