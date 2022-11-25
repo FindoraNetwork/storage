@@ -84,6 +84,28 @@ impl MerkleDB for MemoryDB {
         Ok(())
     }
 
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>
+    {
+        let lower_key: &[u8] = b"0";
+
+        let lower = lower_key.to_vec().into_boxed_slice();
+        let upper =  lower_key.to_vec().into_boxed_slice();
+
+        match order {
+            IterOrder::Asc => Box::new(
+                self.inner
+                    .range::<Box<[u8]>, _>((Included(&lower), Excluded(&upper)))
+                    .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.clone()))),
+            ),
+            IterOrder::Desc => Box::new(
+                self.inner
+                    .range::<Box<[u8]>, _>((Included(&lower), Excluded(&upper)))
+                    .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.clone())))
+                    .rev(),
+            ),
+        }
+    }
+
     fn iter(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         let lower = lower.to_vec().into_boxed_slice();
         let upper = upper.to_vec().into_boxed_slice();
@@ -141,6 +163,11 @@ impl MerkleDB for MemoryDB {
 
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         (kv_pair.0.to_vec(), kv_pair.1.to_vec())
+    }
+
+    fn clean_aux(&mut self) -> Result<()> {
+        self.aux.clear();
+        Ok(())
     }
 }
 

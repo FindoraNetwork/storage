@@ -58,7 +58,9 @@ impl MerkleDB for TempFinDB {
     fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         self.deref().iter_aux(lower, upper, order)
     }
-
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>{
+        self.deref().db_all_iterator(order)
+    }
     fn commit(&mut self, aux: KVBatch, flush: bool) -> Result<()> {
         self.deref_mut().commit(aux, flush)
     }
@@ -69,6 +71,10 @@ impl MerkleDB for TempFinDB {
 
     fn decode_kv(&self, kv_pair: (Box<[u8]>, Box<[u8]>)) -> KValue {
         self.deref().decode_kv(kv_pair)
+    }
+
+    fn clean_aux(&mut self) -> Result<()> {
+        self.deref_mut().clean_aux()
     }
 }
 
