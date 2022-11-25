@@ -58,7 +58,7 @@ impl MerkleDB for TempFinDB {
     fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         self.deref().iter_aux(lower, upper, order)
     }
-    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>{
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_> {
         self.deref().db_all_iterator(order)
     }
     fn commit(&mut self, aux: KVBatch, flush: bool) -> Result<()> {
@@ -76,7 +76,9 @@ impl MerkleDB for TempFinDB {
     fn clean_aux(&mut self) -> Result<()> {
         self.deref_mut().clean_aux()
     }
-    fn export_aux(&mut self, cs: &mut Self) -> Result<()>{self.deref_mut().export_aux(cs)}
+    fn export_aux(&mut self, cs: &mut Self) -> Result<()> {
+        self.deref_mut().export_aux(cs)
+    }
 }
 
 impl Deref for TempFinDB {
@@ -187,17 +189,20 @@ mod tests {
         let path = thread::current().name().unwrap().to_owned();
         let mut fdb = TempFinDB::open(path).expect("failed to open db");
 
-        fdb.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))],false)
+        fdb.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))], false)
             .unwrap();
         fdb.commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
             .unwrap();
 
         // update data at height
-        fdb.commit(vec![
-            (b"k10".to_vec(), Some(b"v12".to_vec())),
-            (b"k20".to_vec(), Some(b"v20".to_vec())),
-        ],false)
-            .unwrap();
+        fdb.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v12".to_vec())),
+                (b"k20".to_vec(), Some(b"v20".to_vec())),
+            ],
+            false,
+        )
+        .unwrap();
         // commit data with aux
         fdb.commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
             .unwrap();
@@ -213,9 +218,11 @@ mod tests {
         assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
         assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
 
-        cs_fdb.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))],false)
+        cs_fdb
+            .commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))], false)
             .unwrap();
-        cs_fdb.commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
+        cs_fdb
+            .commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
             .unwrap();
 
         assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
@@ -224,12 +231,16 @@ mod tests {
 
         let mut new_cs_fdb = TempFinDB::new().unwrap();
         cs_fdb.export_aux(&mut new_cs_fdb).unwrap();
-        new_cs_fdb.commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
+        new_cs_fdb
+            .commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
             .unwrap();
 
         assert_eq!(new_cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
         assert_eq!(new_cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
-        assert_eq!(new_cs_fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
+        assert_eq!(
+            new_cs_fdb.get_aux(b"height").unwrap().unwrap(),
+            b"101".to_vec()
+        );
     }
 
     #[test]

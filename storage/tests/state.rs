@@ -479,7 +479,7 @@ fn test_height_internal_to_base() {
     for k in 0..batch_size {
         let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
         let value = format!("val-{}", k);
-       // println!("height_internal_to_base_key：{:?}", std::str::from_utf8(&key).unwrap());
+        // println!("height_internal_to_base_key：{:?}", std::str::from_utf8(&key).unwrap());
         assert_eq!(
             cs.get_aux(key.as_slice()).unwrap().unwrap().as_slice(),
             value.as_bytes()

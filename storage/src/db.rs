@@ -44,5 +44,5 @@ pub trait MerkleDB {
 
     fn clean_aux(&mut self) -> Result<()>;
 
-    fn export_aux(&mut self,cs: &mut Self) -> Result<()>;
+    fn export_aux(&mut self, cs: &mut Self) -> Result<()>;
 }
