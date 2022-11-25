@@ -3,12 +3,12 @@ use mem_db::MemoryDB;
 use parking_lot::RwLock;
 use rand::Rng;
 use std::{sync::Arc, thread};
+use storage::state::{chain_state::DeletStatus, IterateStatus};
 use storage::{
     db::{IterOrder, KVBatch, KValue, MerkleDB},
     state::{ChainState, ChainStateOpts, State},
     store::Prefix,
 };
-use storage::state::{chain_state::DeletStatus, IterateStatus};
 use temp_db::{TempFinDB, TempRocksDB};
 
 const VER_WINDOW: u64 = 100;
@@ -486,10 +486,7 @@ fn test_delete_base() {
 
     for k in 0..batch_size {
         let key = ChainState::<TempFinDB>::base_key(format!("key-{}", k).as_bytes());
-        assert_eq!(
-            cs.get_aux(key.as_slice()).unwrap(),
-           None,
-        )
+        assert_eq!(cs.get_aux(key.as_slice()).unwrap(), None,)
     }
 }
 
@@ -618,7 +615,7 @@ fn test_height_internal_to_base() {
 
     let _ = cs.delete_option(DeletStatus::Key(b"BaseHeight".to_vec()));
     assert_eq!(cs.get_aux(b"BaseHeight").unwrap(), None);
-   // cs.height_internal_to_base(10).unwrap();
+    // cs.height_internal_to_base(10).unwrap();
 }
 
 #[test]

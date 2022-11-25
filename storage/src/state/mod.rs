@@ -173,7 +173,11 @@ impl<D: MerkleDB> State<D> {
         func: &mut dyn FnMut(KValue) -> bool,
     ) -> bool {
         let cs = self.chain_state.read();
-        cs.iterate_db(IterateStatus::Db((lower.to_vec(), upper.to_vec())), order, func)
+        cs.iterate_db(
+            IterateStatus::Db((lower.to_vec(), upper.to_vec())),
+            order,
+            func,
+        )
     }
 
     /// Iterates the cache for a given prefix

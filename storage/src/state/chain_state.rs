@@ -9,6 +9,7 @@ use crate::{
     store::Prefix,
 };
 use ruc::*;
+use std::borrow::Borrow;
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
@@ -16,7 +17,6 @@ use std::{
     path::Path,
     str,
 };
-use std::borrow::Borrow;
 
 const HEIGHT_KEY: &[u8; 6] = b"Height";
 const BASE_HEIGHT_KEY: &[u8; 10] = b"BaseHeight";
@@ -65,15 +65,15 @@ pub struct ChainStateOpts {
 }
 
 pub enum DeletStatus {
-     Base,
-     Ver((u64, u64)),
-     Key(Vec<u8>),
+    Base,
+    Ver((u64, u64)),
+    Key(Vec<u8>),
 }
 
 pub enum IterateStatus {
-    All, //Iterate over all the values
+    All,                       //Iterate over all the values
     AuxCf((Vec<u8>, Vec<u8>)), //Iterate in aux cf
-    Db((Vec<u8>, Vec<u8>)), //Iterate in rockDb
+    Db((Vec<u8>, Vec<u8>)),    //Iterate in rockDb
 }
 
 /// Implementation of of the concrete ChainState struct
@@ -257,14 +257,14 @@ impl<D: MerkleDB> ChainState<D> {
         status: &IterateStatus,
         kv_pair: (Box<[u8]>, Box<[u8]>),
     ) -> KValue {
-        match  status {
-            IterateStatus::All => {self.db.decode_kv(kv_pair)}
+        match status {
+            IterateStatus::All => self.db.decode_kv(kv_pair),
             IterateStatus::AuxCf(_) => {
                 let key = kv_pair.0;
                 let value = kv_pair.1;
                 (key.to_vec(), value.to_vec())
             }
-            IterateStatus::Db(_) => {self.db.decode_kv(kv_pair)}
+            IterateStatus::Db(_) => self.db.decode_kv(kv_pair),
         }
     }
 
@@ -282,7 +282,7 @@ impl<D: MerkleDB> ChainState<D> {
         let mut stop = false;
         let mut db_iter;
 
-        match  &status {
+        match &status {
             IterateStatus::All => {
                 db_iter = self.db.db_all_iterator(order);
             }
@@ -299,40 +299,40 @@ impl<D: MerkleDB> ChainState<D> {
                 Some(result) => result,
                 None => break,
             };
-            let entry =  self.handle_kv_pair(status.borrow(),kv_pair);
+            let entry = self.handle_kv_pair(status.borrow(), kv_pair);
             stop = func(entry);
         }
         true
     }
 
     /*
-    /// Iterates MerkleDB for a given range of keys.
-    ///
-    /// Executes a closure passed as a parameter with the corresponding key value pairs.
-    pub fn iterate(
-        &self,
-        lower: &[u8],
-        upper: &[u8],
-        order: IterOrder,
-        func: &mut dyn FnMut(KValue) -> bool,
-    ) -> bool {
-        // Get DB iterator
-        let mut db_iter = self.db.iter(lower, upper, order);
-        let mut stop = false;
+        /// Iterates MerkleDB for a given range of keys.
+        ///
+        /// Executes a closure passed as a parameter with the corresponding key value pairs.
+        pub fn iterate(
+            &self,
+            lower: &[u8],
+            upper: &[u8],
+            order: IterOrder,
+            func: &mut dyn FnMut(KValue) -> bool,
+        ) -> bool {
+            // Get DB iterator
+            let mut db_iter = self.db.iter(lower, upper, order);
+            let mut stop = false;
 
-        // Loop through each entry in range
-        while !stop {
-            let kv_pair = match db_iter.next() {
-                Some(result) => result,
-                None => break,
-            };
+            // Loop through each entry in range
+            while !stop {
+                let kv_pair = match db_iter.next() {
+                    Some(result) => result,
+                    None => break,
+                };
 
-            let entry = self.db.decode_kv(kv_pair);
-            stop = func(entry);
+                let entry = self.db.decode_kv(kv_pair);
+                stop = func(entry);
+            }
+            true
         }
-        true
-    }
-*/
+    */
     /// Queries the DB for existence of a key.
     ///
     /// Returns a bool wrapped in a result as the query involves DB access.
@@ -766,11 +766,8 @@ impl<D: MerkleDB> ChainState<D> {
         let upper_key = Self::versioned_key(key, upper_bound.saturating_add(1));
         let _ = self.iterate_db(
             IterateStatus::AuxCf((lower_key, upper_key)),
-            IterOrder::Desc, &mut |(
-            ver_k,
-            v,
-        )| {
-            match Self::get_raw_versioned_key(&ver_k) {
+            IterOrder::Desc,
+            &mut |(ver_k, v)| match Self::get_raw_versioned_key(&ver_k) {
                 Ok(k) => {
                     if k.as_bytes().eq(key) {
                         if !v.eq(&TOMBSTONE) {
@@ -786,8 +783,8 @@ impl<D: MerkleDB> ChainState<D> {
                     stop = true;
                     true
                 }
-            }
-        });
+            },
+        );
 
         if stop {
             return val;
@@ -1041,9 +1038,7 @@ impl<D: MerkleDB> ChainState<D> {
         ];
         println!("{} construct base {}", self.name, height);
 
-        self.iterate_db(
-            IterateStatus::All,
-            IterOrder::Asc, &mut |(k, v)| -> bool {
+        self.iterate_db(IterateStatus::All, IterOrder::Asc, &mut |(k, v)| -> bool {
             let base_key = Self::base_key(&k);
             batch.push((base_key, Some(v)));
             false
@@ -1159,16 +1154,19 @@ impl<D: MerkleDB> ChainState<D> {
     ) -> Result<(bool, Option<Vec<u8>>)> {
         let mut val = Ok((false, None));
 
-        let _ = self.iterate_db(IterateStatus::AuxCf((lower, upper)),
-                                order, &mut |(ver_k, v)| {
-            if let Ok(k) = Self::get_raw_versioned_key(&ver_k) {
-                if k.as_bytes().eq(key) {
-                    val = Ok((true, if !v.eq(&TOMBSTONE) { Some(v) } else { None }));
-                    return true;
+        let _ = self.iterate_db(
+            IterateStatus::AuxCf((lower, upper)),
+            order,
+            &mut |(ver_k, v)| {
+                if let Ok(k) = Self::get_raw_versioned_key(&ver_k) {
+                    if k.as_bytes().eq(key) {
+                        val = Ok((true, if !v.eq(&TOMBSTONE) { Some(v) } else { None }));
+                        return true;
+                    }
                 }
-            }
-            false
-        });
+                false
+            },
+        );
         val
     }
 
@@ -1296,9 +1294,7 @@ impl<D: MerkleDB> ChainState<D> {
     pub fn height_internal_to_base(&mut self, height: u64) -> Result<()> {
         let mut batch = KVBatch::new();
 
-        self.iterate_db(
-            IterateStatus::All,
-            IterOrder::Asc, &mut |(k, v)| -> bool {
+        self.iterate_db(IterateStatus::All, IterOrder::Asc, &mut |(k, v)| -> bool {
             let base_key = Self::base_key(&k);
             batch.push((base_key, Some(v)));
             false
@@ -1314,8 +1310,7 @@ impl<D: MerkleDB> ChainState<D> {
         Ok(())
     }
 
-    pub fn delete_option(&mut self, option:DeletStatus)-> Result<()>
-    {
+    pub fn delete_option(&mut self, option: DeletStatus) -> Result<()> {
         let mut batch = KVBatch::new();
         match option {
             DeletStatus::Base => {
