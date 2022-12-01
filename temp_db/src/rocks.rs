@@ -58,7 +58,7 @@ impl MerkleDB for TempRocksDB {
     fn iter_aux(&self, lower: &[u8], upper: &[u8], order: IterOrder) -> DbIter<'_> {
         self.deref().iter(lower, upper, order)
     }
-    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>{
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_> {
         self.deref().db_all_iterator(order)
     }
     fn commit(&mut self, kvs: KVBatch, flush: bool) -> Result<()> {
@@ -106,56 +106,26 @@ mod tests {
     use std::thread;
     use storage::db::{IterOrder, MerkleDB};
 
-    /*#[test]
-        fn db_export_aux() {
-            let path = thread::current().name().unwrap().to_owned();
-            let mut fdb = TempRocksDB::open(path).expect("failed to open db");
+    #[test]
+    fn db_put_n_get() {
+        let path = thread::current().name().unwrap().to_owned();
+        let mut db = TempRocksDB::open(path).expect("failed to open db");
 
-            fdb.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))],false)
-                .unwrap();
-            fdb.commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
-                .unwrap();
-
-            // update data at height
-            fdb.commit(vec![
-                (b"k10".to_vec(), Some(b"v12".to_vec())),
+        // commit data
+        db.commit(
+            vec![
+                (b"k10".to_vec(), Some(b"v10".to_vec())),
                 (b"k20".to_vec(), Some(b"v20".to_vec())),
-            ],false)
-                .unwrap();
-            // commit data with aux
-            fdb.commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
-                .unwrap();
+            ],
+            true,
+        )
+        .unwrap();
 
-            // get and compare
-            assert_eq!(fdb.get_aux(b"k10").unwrap(), Some(b"v12".to_vec()));
-            assert_eq!(fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
-            assert_eq!(fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
+        // get and compare
+        assert_eq!(db.get(b"k10").unwrap().unwrap(), b"v10".to_vec());
+        assert_eq!(db.get(b"k20").unwrap().unwrap(), b"v20".to_vec());
+    }
 
-            let mut cs_fdb = TempRocksDB::new().unwrap();
-            fdb.export_aux(&mut cs_fdb).unwrap();
-            assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v12".to_vec()));
-            assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
-            assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
-
-            cs_fdb.commit(vec![(b"k10".to_vec(), Some(b"v10".to_vec()))],false)
-                .unwrap();
-            cs_fdb.commit(vec![(b"height".to_vec(), Some(b"100".to_vec()))], false)
-                .unwrap();
-
-            assert_eq!(cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
-            assert_eq!(cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
-            assert_eq!(cs_fdb.get_aux(b"height").unwrap().unwrap(), b"100".to_vec());
-
-            let mut new_cs_fdb = TempRocksDB::new().unwrap();
-            cs_fdb.export_aux(&mut new_cs_fdb).unwrap();
-            new_cs_fdb.commit(vec![(b"height".to_vec(), Some(b"101".to_vec()))], false)
-                .unwrap();
-
-            assert_eq!(new_cs_fdb.get_aux(b"k10").unwrap(), Some(b"v10".to_vec()));
-            assert_eq!(new_cs_fdb.get_aux(b"k20").unwrap(), Some(b"v20".to_vec()));
-            assert_eq!(new_cs_fdb.get_aux(b"height").unwrap().unwrap(), b"101".to_vec());
-        }
-    */
     #[test]
     fn db_del_n_get() {
         let path = thread::current().name().unwrap().to_owned();
