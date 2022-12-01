@@ -287,10 +287,10 @@ impl<D: MerkleDB> ChainState<D> {
                 db_iter = self.db.db_all_iterator(order);
             }
             IterateStatus::AuxCf((lower, upper)) => {
-                db_iter = self.db.iter_aux(&lower, &upper, order);
+                db_iter = self.db.iter_aux(lower, upper, order);
             }
             IterateStatus::Db((lower, upper)) => {
-                db_iter = self.db.iter(&lower, &upper, order);
+                db_iter = self.db.iter(lower, upper, order);
             }
         }
 
