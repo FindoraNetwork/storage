@@ -99,15 +99,13 @@ impl MerkleDB for FinDB {
             IterOrder::Desc => Box::new(self.db.iter_opt_aux(rocksdb::IteratorMode::End, readopts)),
         }
     }
-    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>
-    {
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_> {
         let readopts = rocksdb::ReadOptions::default();
         match order {
             IterOrder::Asc => Box::new(self.db.iter_opt(rocksdb::IteratorMode::Start, readopts)),
             IterOrder::Desc => Box::new(self.db.iter_opt(rocksdb::IteratorMode::End, readopts)),
         }
     }
-
 
     /// Commits changes.
     fn commit(&mut self, aux: KVBatch, flush: bool) -> Result<()> {
@@ -139,6 +137,9 @@ impl MerkleDB for FinDB {
 
     fn clean_aux(&mut self) -> Result<()> {
         self.db.clean_aux().map_err(|e| eg!(e))
+    }
+    fn export_aux(&mut self, cs: &mut Self) -> Result<()> {
+        self.db.export_aux(&mut cs.db).map_err(|e| eg!(e))
     }
 }
 
@@ -265,8 +266,7 @@ impl MerkleDB for RocksDB {
         self.iter(lower, upper, order)
     }
 
-    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>
-    {
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_> {
         let readopts = rocksdb::ReadOptions::default();
         match order {
             IterOrder::Asc => Box::new(self.iter_opt(rocksdb::IteratorMode::Start, readopts)),
@@ -314,6 +314,11 @@ impl MerkleDB for RocksDB {
         // self.db.write_opt(batch, &opts).c(d!())?;
         // self.db.flush_cf(state_cf).c(d!())?;
 
+        Ok(())
+    }
+
+    #[warn(unused_variables)]
+    fn export_aux(&mut self, _cs: &mut Self) -> Result<()> {
         Ok(())
     }
 }
