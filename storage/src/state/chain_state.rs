@@ -701,26 +701,23 @@ impl<D: MerkleDB> ChainState<D> {
 
         let cur_height = self.height().c(d!("error reading current height"))?;
 
-        if self.interval != 0 {
-            let height = if cur_height <= height {
-                cur_height
-            } else {
-                height
-            };
-            return self.find_versioned_key_with_snapshots(key, height);
-        }
         //Make sure that this key exists to avoid expensive query
         let val = self.get(key).c(d!("error getting value"))?;
         if val.is_none() {
             return Ok(None);
         }
 
-        //Need to set lower and upper bound as the height can get very large
-        let mut lower_bound = 1;
-        let upper_bound = height;
         if height >= cur_height {
             return Ok(val);
         }
+
+        if self.interval != 0 {
+            return self.find_versioned_key_with_snapshots(key, height);
+        }
+
+        //Need to set lower and upper bound as the height can get very large
+        let mut lower_bound = 1;
+        let upper_bound = height;
         if cur_height > self.ver_window {
             lower_bound = cur_height.saturating_sub(self.ver_window);
         }
