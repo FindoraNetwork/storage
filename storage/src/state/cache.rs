@@ -66,6 +66,8 @@ pub struct SessionedCache {
     is_merkle: bool,
 }
 
+pub type QueryCache = KVMap;
+
 #[allow(clippy::new_without_default)]
 impl SessionedCache {
     pub fn new(is_merkle: bool) -> Self {

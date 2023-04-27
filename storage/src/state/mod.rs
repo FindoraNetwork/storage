@@ -5,11 +5,12 @@ pub mod cache;
 pub mod chain_state;
 
 use crate::db::{IterOrder, KValue, MerkleDB};
-pub use cache::{KVMap, KVecMap, SessionedCache};
+pub use cache::{KVMap, KVecMap, QueryCache, SessionedCache};
 pub use chain_state::{ChainState, ChainStateOpts};
 use parking_lot::RwLock;
 use ruc::*;
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::{collections::BTreeMap, sync::Arc};
 
 /// State Definition used by all stores
 ///
@@ -19,6 +20,7 @@ pub struct State<D: MerkleDB> {
     chain_state: Arc<RwLock<ChainState<D>>>,
     cache: SessionedCache,
     height_cap: Option<u64>,
+    query_cache: RefCell<Option<QueryCache>>,
 }
 
 impl<D: MerkleDB> Drop for State<D> {
@@ -40,6 +42,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: self.cache.clone(),
             height_cap: None,
+            query_cache: self.query_cache.clone(),
         }
     }
 
@@ -55,6 +58,18 @@ impl<D: MerkleDB> State<D> {
         self.cache.stack_discard();
     }
 
+    pub fn create_query_cache(&mut self) {
+        if self.query_cache.borrow().is_none() {
+            *self.query_cache.borrow_mut() = Some(BTreeMap::<Vec<u8>, Option<Vec<u8>>>::new());
+        }
+    }
+
+    pub fn clear_query_cache(&mut self) {
+        if self.query_cache.borrow().is_some() {
+            self.query_cache.borrow_mut().as_mut().unwrap().clear();
+        }
+    }
+
     /// Creates a State with a new cache and shared ChainState
     pub fn new(cs: Arc<RwLock<ChainState<D>>>, is_merkle: bool) -> Self {
         State {
@@ -62,6 +77,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: cs,
             cache: SessionedCache::new(is_merkle),
             height_cap: None,
+            query_cache: RefCell::new(None),
         }
     }
 
@@ -71,6 +87,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: self.cache.clone(),
             height_cap: None,
+            query_cache: RefCell::new(None),
         }
     }
 
@@ -81,6 +98,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: SessionedCache::new(self.cache.is_merkle()),
             height_cap: Some(height),
+            query_cache: RefCell::new(None),
         })
     }
 
@@ -95,7 +113,7 @@ impl<D: MerkleDB> State<D> {
     /// Returns the value if found, otherwise queries the chainState.
     ///
     /// Can either return None or a Vec<u8> as the value.
-    pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    pub fn get_inner(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         //Check if value was deleted
         if self.cache.deleted(key) {
             return Ok(None);
@@ -113,12 +131,62 @@ impl<D: MerkleDB> State<D> {
         }
     }
 
-    pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+    pub fn get_ver_inner(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
         let query_at = match self.height_cap {
             Some(cap) if cap < height => cap,
             _ => height,
         };
         self.chain_state.read().get_ver(key, query_at)
+    }
+
+    pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        if self.query_cache.borrow().is_some() {
+            match self.query_cache.borrow().as_ref().unwrap().get(key) {
+                Some(v) => {
+                    return Ok(v.to_owned());
+                }
+                None => {}
+            }
+        }
+
+        let res = self.get_inner(key);
+        if res.is_ok() && self.query_cache.borrow().is_some() {
+            self.query_cache
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .insert(key.to_owned(), res.as_ref().unwrap().to_owned());
+        }
+        res
+    }
+
+    pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
+
+        if self.query_cache.borrow().is_some() {
+            match self
+                .query_cache
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .get(&key_with_ver)
+            {
+                Some(v) => {
+                    return Ok(v.to_owned());
+                }
+                None => {}
+            }
+        }
+
+        let res = self.get_ver_inner(key, height);
+        if res.is_ok() && self.query_cache.borrow().is_some() {
+            self.query_cache
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .insert(key_with_ver, res.as_ref().unwrap().to_owned());
+        }
+        res
     }
 
     /// Queries whether a key exists in the current state.
