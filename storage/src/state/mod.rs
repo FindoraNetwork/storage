@@ -9,7 +9,6 @@ pub use cache::{KVMap, KVecMap, QueryCache, SessionedCache};
 pub use chain_state::{ChainState, ChainStateOpts};
 use parking_lot::RwLock;
 use ruc::*;
-use std::cell::RefCell;
 use std::{collections::BTreeMap, sync::Arc};
 
 /// State Definition used by all stores
@@ -20,7 +19,7 @@ pub struct State<D: MerkleDB> {
     chain_state: Arc<RwLock<ChainState<D>>>,
     cache: SessionedCache,
     height_cap: Option<u64>,
-    query_cache: RefCell<Option<QueryCache>>,
+    query_cache: RwLock<Option<QueryCache>>,
 }
 
 impl<D: MerkleDB> Drop for State<D> {
@@ -42,7 +41,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: self.cache.clone(),
             height_cap: None,
-            query_cache: self.query_cache.clone(),
+            query_cache: RwLock::new(None),
         }
     }
 
@@ -59,14 +58,14 @@ impl<D: MerkleDB> State<D> {
     }
 
     pub fn create_query_cache(&mut self) {
-        if self.query_cache.borrow().is_none() {
-            *self.query_cache.borrow_mut() = Some(BTreeMap::<Vec<u8>, Option<Vec<u8>>>::new());
+        if self.query_cache.read().is_none() {
+            *self.query_cache.write() = Some(BTreeMap::<Vec<u8>, Option<Vec<u8>>>::new());
         }
     }
 
     pub fn clear_query_cache(&mut self) {
-        if self.query_cache.borrow().is_some() {
-            self.query_cache.borrow_mut().as_mut().unwrap().clear();
+        if self.query_cache.read().is_some() {
+            *self.query_cache.write() = None;
         }
     }
 
@@ -77,7 +76,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: cs,
             cache: SessionedCache::new(is_merkle),
             height_cap: None,
-            query_cache: RefCell::new(None),
+            query_cache: RwLock::new(None),
         }
     }
 
@@ -87,7 +86,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: self.cache.clone(),
             height_cap: None,
-            query_cache: RefCell::new(None),
+            query_cache: RwLock::new(None),
         }
     }
 
@@ -98,7 +97,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: SessionedCache::new(self.cache.is_merkle()),
             height_cap: Some(height),
-            query_cache: RefCell::new(None),
+            query_cache: RwLock::new(None),
         })
     }
 
@@ -140,8 +139,8 @@ impl<D: MerkleDB> State<D> {
     }
 
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if self.query_cache.borrow().is_some() {
-            match self.query_cache.borrow().as_ref().unwrap().get(key) {
+        if self.query_cache.read().is_some() {
+            match self.query_cache.read().as_ref().unwrap().get(key) {
                 Some(v) => {
                     return Ok(v.to_owned());
                 }
@@ -150,9 +149,9 @@ impl<D: MerkleDB> State<D> {
         }
 
         let res = self.get_inner(key);
-        if res.is_ok() && self.query_cache.borrow().is_some() {
+        if res.is_ok() && self.query_cache.read().is_some() {
             self.query_cache
-                .borrow_mut()
+                .write()
                 .as_mut()
                 .unwrap()
                 .insert(key.to_owned(), res.as_ref().unwrap().to_owned());
@@ -163,14 +162,8 @@ impl<D: MerkleDB> State<D> {
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
         let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
 
-        if self.query_cache.borrow().is_some() {
-            match self
-                .query_cache
-                .borrow()
-                .as_ref()
-                .unwrap()
-                .get(&key_with_ver)
-            {
+        if self.query_cache.read().is_some() {
+            match self.query_cache.read().as_ref().unwrap().get(&key_with_ver) {
                 Some(v) => {
                     return Ok(v.to_owned());
                 }
@@ -179,9 +172,9 @@ impl<D: MerkleDB> State<D> {
         }
 
         let res = self.get_ver_inner(key, height);
-        if res.is_ok() && self.query_cache.borrow().is_some() {
+        if res.is_ok() && self.query_cache.read().is_some() {
             self.query_cache
-                .borrow_mut()
+                .write()
                 .as_mut()
                 .unwrap()
                 .insert(key_with_ver, res.as_ref().unwrap().to_owned());
