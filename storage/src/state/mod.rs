@@ -7,7 +7,7 @@ pub mod chain_state;
 use crate::db::{IterOrder, KValue, MerkleDB};
 pub use cache::{KVMap, KVecMap, QueryCache, SessionedCache};
 pub use chain_state::{ChainState, ChainStateOpts};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use ruc::*;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -19,7 +19,7 @@ pub struct State<D: MerkleDB> {
     chain_state: Arc<RwLock<ChainState<D>>>,
     cache: SessionedCache,
     height_cap: Option<u64>,
-    query_cache: RwLock<Option<QueryCache>>,
+    query_cache: Mutex<Option<QueryCache>>,
 }
 
 impl<D: MerkleDB> Drop for State<D> {
@@ -41,7 +41,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: self.cache.clone(),
             height_cap: None,
-            query_cache: RwLock::new(None),
+            query_cache: Mutex::new(None),
         }
     }
 
@@ -58,14 +58,18 @@ impl<D: MerkleDB> State<D> {
     }
 
     pub fn create_query_cache(&mut self) {
-        if self.query_cache.read().is_none() {
-            *self.query_cache.write() = Some(BTreeMap::<Vec<u8>, Option<Vec<u8>>>::new());
+        let mut query_cache = self.query_cache.lock();
+
+        if query_cache.is_none() {
+            *query_cache = Some(BTreeMap::<Vec<u8>, Option<Vec<u8>>>::new());
         }
     }
 
     pub fn clear_query_cache(&mut self) {
-        if self.query_cache.read().is_some() {
-            *self.query_cache.write() = None;
+        let mut query_cache = self.query_cache.lock();
+
+        if query_cache.is_some() {
+            *query_cache = None;
         }
     }
 
@@ -76,7 +80,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: cs,
             cache: SessionedCache::new(is_merkle),
             height_cap: None,
-            query_cache: RwLock::new(None),
+            query_cache: Mutex::new(None),
         }
     }
 
@@ -86,7 +90,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: self.cache.clone(),
             height_cap: None,
-            query_cache: RwLock::new(None),
+            query_cache: Mutex::new(None),
         }
     }
 
@@ -97,7 +101,7 @@ impl<D: MerkleDB> State<D> {
             chain_state: self.chain_state.clone(),
             cache: SessionedCache::new(self.cache.is_merkle()),
             height_cap: Some(height),
-            query_cache: RwLock::new(None),
+            query_cache: Mutex::new(None),
         })
     }
 
@@ -139,8 +143,12 @@ impl<D: MerkleDB> State<D> {
     }
 
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if self.query_cache.read().is_some() {
-            match self.query_cache.read().as_ref().unwrap().get(key) {
+        let mut query_cache = self.query_cache.lock();
+        let height = self.height().unwrap();
+        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
+
+        if query_cache.is_some() {
+            match query_cache.as_ref().unwrap().get(&key_with_ver) {
                 Some(v) => {
                     return Ok(v.to_owned());
                 }
@@ -149,21 +157,21 @@ impl<D: MerkleDB> State<D> {
         }
 
         let res = self.get_inner(key);
-        if res.is_ok() && self.query_cache.read().is_some() {
-            self.query_cache
-                .write()
+        if res.is_ok() && query_cache.is_some() {
+            query_cache
                 .as_mut()
                 .unwrap()
-                .insert(key.to_owned(), res.as_ref().unwrap().to_owned());
+                .insert(key_with_ver.to_owned(), res.as_ref().unwrap().to_owned());
         }
         res
     }
 
     pub fn get_ver(&self, key: &[u8], height: u64) -> Result<Option<Vec<u8>>> {
+        let mut query_cache = self.query_cache.lock();
         let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
 
-        if self.query_cache.read().is_some() {
-            match self.query_cache.read().as_ref().unwrap().get(&key_with_ver) {
+        if query_cache.is_some() {
+            match query_cache.as_ref().unwrap().get(&key_with_ver) {
                 Some(v) => {
                     return Ok(v.to_owned());
                 }
@@ -172,9 +180,8 @@ impl<D: MerkleDB> State<D> {
         }
 
         let res = self.get_ver_inner(key, height);
-        if res.is_ok() && self.query_cache.read().is_some() {
-            self.query_cache
-                .write()
+        if res.is_ok() && query_cache.is_some() {
+            query_cache
                 .as_mut()
                 .unwrap()
                 .insert(key_with_ver, res.as_ref().unwrap().to_owned());
@@ -186,6 +193,18 @@ impl<D: MerkleDB> State<D> {
     ///
     /// First Checks the cache, returns true if found otherwise queries the chainState.
     pub fn exists(&self, key: &[u8]) -> Result<bool> {
+        let query_cache = self.query_cache.lock();
+        let height = self.height().unwrap();
+        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
+        if query_cache.is_some() {
+            match query_cache.as_ref().unwrap().get(&key_with_ver) {
+                Some(_) => {
+                    return Ok(true);
+                }
+                None => {}
+            }
+        }
+
         //Check if the key exists in the cache otherwise check the chain state
         let val = self.cache.getv(key);
         if val.is_some() {
@@ -200,7 +219,17 @@ impl<D: MerkleDB> State<D> {
 
     /// Sets a key value pair in the cache
     pub fn set(&mut self, key: &[u8], value: Vec<u8>) -> Result<()> {
-        if self.cache.put(key, value) {
+        let mut query_cache = self.query_cache.lock();
+        let height = self.height().unwrap();
+        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
+
+        if self.cache.put(key, value.clone()) {
+            if query_cache.is_some() {
+                query_cache
+                    .as_mut()
+                    .unwrap()
+                    .insert(key_with_ver.to_owned(), Some(value));
+            }
             Ok(())
         } else {
             Err(eg!("Invalid key-value pair detected."))
@@ -209,12 +238,25 @@ impl<D: MerkleDB> State<D> {
 
     /// Deletes a key from the State.
     pub fn delete(&mut self, key: &[u8]) -> Result<()> {
+        let mut query_cache = self.query_cache.lock();
+        let height = self.height().unwrap();
+        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
+
         self.cache.delete(key);
+
+        if query_cache.is_some() {
+            query_cache.as_mut().unwrap().remove(&key_with_ver).unwrap();
+        }
+
         Ok(())
     }
 
     // Deprecated and replaced by `delete`
     pub fn delete_v0(&mut self, key: &[u8]) -> Result<()> {
+        let mut query_cache = self.query_cache.lock();
+        let height = self.height().unwrap();
+        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
+
         let cs = self.chain_state.read();
         match cs.get(key).c(d!())? {
             //Mark key as deleted
@@ -222,6 +264,11 @@ impl<D: MerkleDB> State<D> {
             //Remove key from cache
             None => self.cache.remove(key),
         }
+
+        if query_cache.is_some() {
+            query_cache.as_mut().unwrap().remove(&key_with_ver).unwrap();
+        }
+
         Ok(())
     }
 
