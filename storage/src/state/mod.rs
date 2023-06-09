@@ -219,11 +219,10 @@ impl<D: MerkleDB> State<D> {
 
     /// Sets a key value pair in the cache
     pub fn set(&mut self, key: &[u8], value: Vec<u8>) -> Result<()> {
-        let mut query_cache = self.query_cache.lock();
-        let height = self.height().unwrap();
-        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
-
         if self.cache.put(key, value.clone()) {
+            let mut query_cache = self.query_cache.lock();
+            let height = self.height().unwrap();
+            let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
             if query_cache.is_some() {
                 query_cache
                     .as_mut()
@@ -238,12 +237,11 @@ impl<D: MerkleDB> State<D> {
 
     /// Deletes a key from the State.
     pub fn delete(&mut self, key: &[u8]) -> Result<()> {
+        self.cache.delete(key);
+
         let mut query_cache = self.query_cache.lock();
         let height = self.height().unwrap();
         let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
-
-        self.cache.delete(key);
-
         if query_cache.is_some() {
             query_cache.as_mut().unwrap().remove(&key_with_ver).unwrap();
         }
@@ -253,10 +251,6 @@ impl<D: MerkleDB> State<D> {
 
     // Deprecated and replaced by `delete`
     pub fn delete_v0(&mut self, key: &[u8]) -> Result<()> {
-        let mut query_cache = self.query_cache.lock();
-        let height = self.height().unwrap();
-        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
-
         let cs = self.chain_state.read();
         match cs.get(key).c(d!())? {
             //Mark key as deleted
@@ -265,6 +259,9 @@ impl<D: MerkleDB> State<D> {
             None => self.cache.remove(key),
         }
 
+        let mut query_cache = self.query_cache.lock();
+        let height = self.height().unwrap();
+        let key_with_ver = format!("{:?}_{}", key, height).into_bytes();
         if query_cache.is_some() {
             query_cache.as_mut().unwrap().remove(&key_with_ver).unwrap();
         }
