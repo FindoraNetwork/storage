@@ -35,6 +35,11 @@ impl FinDB {
         let db = Merk::open(path).map_err(|e| eg!("Failed to open db {}", e))?;
         Ok(Self { db })
     }
+    pub fn open_as_secondary<P: AsRef<Path>>(path: P, secondary_path: P) -> Result<FinDB> {
+        let db = Merk::open_as_secondary(path, secondary_path)
+            .map_err(|e| eg!("Failed to open db {}", e))?;
+        Ok(Self { db })
+    }
 
     /// Closes db and deletes all data from disk.
     pub fn destroy(self) -> Result<()> {
@@ -140,6 +145,12 @@ impl MerkleDB for FinDB {
     fn clean_aux(&mut self) -> Result<()> {
         self.db.clean_aux().map_err(|e| eg!(e))
     }
+
+    fn secondary_catch_up_primary(&self) -> Result<()> {
+        self.db
+            .secondary_catch_up_primary()
+            .map_err(|e| eg!("{}", e))
+    }
 }
 
 /// Rocks db
@@ -156,6 +167,11 @@ impl RocksDB {
         Self::open_opt(path, db_opts)
     }
 
+    pub fn open_as_secondary<P: AsRef<Path>>(path: P, secondary_path: P) -> Result<Self> {
+        let db_opts = Self::default_db_opts();
+        Self::open_opt_as_secondary(path, secondary_path, db_opts)
+    }
+
     /// Closes the store and deletes all data from disk.
     pub fn destroy(self) -> Result<()> {
         let opts = Self::default_db_opts();
@@ -164,7 +180,26 @@ impl RocksDB {
         rocksdb::DB::destroy(&opts, path).c(d!())?;
         Ok(())
     }
+    /// Opens a store with the specified file path and the given options. If no
+    /// store exists at that path, one will be created.
+    fn open_opt_as_secondary<P>(
+        path: P,
+        secondary_path: P,
+        db_opts: rocksdb::Options,
+    ) -> Result<Self>
+    where
+        P: AsRef<Path>,
+    {
+        let mut path_buf = PathBuf::new();
+        path_buf.push(path);
+        let mut secondary_path_buf = PathBuf::new();
+        secondary_path_buf.push(secondary_path);
+        let cfs = vec![CF_STATE];
+        let db = rocksdb::DB::open_cf_as_secondary(&db_opts, &path_buf, &secondary_path_buf, cfs)
+            .c(d!())?;
 
+        Ok(Self { db, path: path_buf })
+    }
     /// Opens a store with the specified file path and the given options. If no
     /// store exists at that path, one will be created.
     fn open_opt<P>(path: P, db_opts: rocksdb::Options) -> Result<Self>
@@ -315,5 +350,9 @@ impl MerkleDB for RocksDB {
         // self.db.flush_cf(state_cf).c(d!())?;
 
         Ok(())
+    }
+
+    fn secondary_catch_up_primary(&self) -> Result<()> {
+        self.db.try_catch_up_with_primary().c(d!())
     }
 }

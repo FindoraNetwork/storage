@@ -43,4 +43,6 @@ pub trait MerkleDB {
     }
 
     fn clean_aux(&mut self) -> Result<()>;
+
+    fn secondary_catch_up_primary(&self) -> Result<()>;
 }

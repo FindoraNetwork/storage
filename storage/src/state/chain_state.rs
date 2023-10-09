@@ -71,7 +71,7 @@ impl<D: MerkleDB> ChainState<D> {
     /// MerkleDB trait is assigned.
     ///
     /// Returns the implicit struct
-    pub fn new(db: D, name: String, ver_window: u64) -> Self {
+    pub fn new(db: D, name: String, ver_window: u64, is_secondary: bool) -> Self {
         let opts = ChainStateOpts {
             name: if name.is_empty() { None } else { Some(name) },
             ver_window,
@@ -79,11 +79,11 @@ impl<D: MerkleDB> ChainState<D> {
             ..Default::default()
         };
 
-        Self::create_with_opts(db, opts)
+        Self::create_with_opts(db, opts, is_secondary)
     }
     /// Create a new instance of ChainState with user specified options
     ///
-    pub fn create_with_opts(db: D, opts: ChainStateOpts) -> Self {
+    pub fn create_with_opts(db: D, opts: ChainStateOpts, is_secondary: bool) -> Self {
         let db_name = opts.name.unwrap_or_else(|| String::from("chain-state"));
 
         if opts.interval == 1 {
@@ -165,13 +165,18 @@ impl<D: MerkleDB> ChainState<D> {
             cs.name, cs.version, base_height, prev_interval
         );
 
-        let mut batch = KVBatch::new();
-        cs.clean_aux_db(&mut base_height, &mut batch);
-        cs.build_snapshots(base_height, prev_interval, opts.interval, &mut batch);
-        cs.commit_db_with_meta(batch);
+        if !is_secondary {
+            let mut batch = KVBatch::new();
+            cs.clean_aux_db(&mut base_height, &mut batch);
+            cs.build_snapshots(base_height, prev_interval, opts.interval, &mut batch);
+            cs.commit_db_with_meta(batch);
+        }
         cs
     }
 
+    pub fn secondary_catch_up_primary(&self) -> Result<()> {
+        self.db.secondary_catch_up_primary()
+    }
     /// Pin the ChainState at specified height
     ///
     pub fn pin_at(&mut self, height: u64) -> Result<()> {
