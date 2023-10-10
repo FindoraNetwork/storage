@@ -76,7 +76,7 @@ impl MerkleDB for TempFinDB {
     fn clean_aux(&mut self) -> Result<()> {
         self.deref_mut().clean_aux()
     }
-    fn secondary_catch_up_primary(&self) -> Result<()> {
+    fn secondary_catch_up_primary(&mut self) -> Result<()> {
         Ok(())
     }
 }

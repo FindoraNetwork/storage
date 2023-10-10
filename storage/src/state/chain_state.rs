@@ -174,7 +174,7 @@ impl<D: MerkleDB> ChainState<D> {
         cs
     }
 
-    pub fn secondary_catch_up_primary(&self) -> Result<()> {
+    pub fn secondary_catch_up_primary(&mut self) -> Result<()> {
         self.db.secondary_catch_up_primary()
     }
     /// Pin the ChainState at specified height
