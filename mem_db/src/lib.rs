@@ -84,12 +84,11 @@ impl MerkleDB for MemoryDB {
         Ok(())
     }
 
-    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_>
-    {
+    fn db_all_iterator(&self, order: IterOrder) -> DbIter<'_> {
         let lower_key: &[u8] = b"0";
 
         let lower = lower_key.to_vec().into_boxed_slice();
-        let upper =  lower_key.to_vec().into_boxed_slice();
+        let upper = lower_key.to_vec().into_boxed_slice();
 
         match order {
             IterOrder::Asc => Box::new(
@@ -168,6 +167,10 @@ impl MerkleDB for MemoryDB {
     fn clean_aux(&mut self) -> Result<()> {
         self.aux.clear();
         Ok(())
+    }
+
+    fn secondary_catch_up_primary(&mut self) -> Result<()> {
+        todo!()
     }
 }
 

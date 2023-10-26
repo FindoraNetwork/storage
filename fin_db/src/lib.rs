@@ -40,7 +40,10 @@ impl FinDB {
             .map_err(|e| eg!("Failed to open db {}", e))?;
         Ok(Self { db })
     }
-
+    pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<FinDB> {
+        let db = Merk::open_read_only(path).map_err(|e| eg!("Failed to open db {}", e))?;
+        Ok(Self { db })
+    }
     /// Closes db and deletes all data from disk.
     pub fn destroy(self) -> Result<()> {
         self.db
@@ -169,7 +172,10 @@ impl RocksDB {
         let db_opts = Self::default_db_opts();
         Self::open_opt_as_secondary(path, secondary_path, db_opts)
     }
-
+    pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let db_opts = Self::default_db_opts();
+        Self::open_opt_read_only(path, db_opts)
+    }
     /// Closes the store and deletes all data from disk.
     pub fn destroy(self) -> Result<()> {
         let opts = Self::default_db_opts();
@@ -177,6 +183,19 @@ impl RocksDB {
         drop(self);
         rocksdb::DB::destroy(&opts, path).c(d!())?;
         Ok(())
+    }
+
+    fn open_opt_read_only<P>(path: P, db_opts: rocksdb::Options) -> Result<Self>
+    where
+        P: AsRef<Path>,
+    {
+        let mut path_buf = PathBuf::new();
+        path_buf.push(path);
+
+        let cfs = vec![CF_STATE];
+        let db = rocksdb::DB::open_cf_for_read_only(&db_opts, &path_buf, cfs, false).c(d!())?;
+
+        Ok(Self { db, path: path_buf })
     }
     /// Opens a store with the specified file path and the given options. If no
     /// store exists at that path, one will be created.

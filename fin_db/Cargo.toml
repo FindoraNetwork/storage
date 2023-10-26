@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 ruc = "1.0"
-fmerk = { git = "https://github.com/FindoraNetwork/fmerk.git", tag = "v2.1.3"}
+fmerk = { git = "https://github.com/FindoraNetwork/fmerk.git", tag = "v2.1.4"}
 storage = { path = "../storage", version = "0.2" }
 
 [features]
